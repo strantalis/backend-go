@@ -1,18 +1,22 @@
 package access
 
 import (
-	"bytes"
+	// "bytes"
+	"crypto"
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
 	"log"
 	"net/http"
 	"strings"
+	// "crypto/rsa"
 
-	"github.com/kaitai-io/kaitai_struct_go_runtime/kaitai"
-	"github.com/opentdf/backend-go/pkg/nano"
+
+	// "github.com/kaitai-io/kaitai_struct_go_runtime/kaitai"
+	// "github.com/opentdf/backend-go/pkg/nano"
 	"github.com/opentdf/backend-go/pkg/tdf3"
 	"gopkg.in/square/go-jose.v2/jwt"
+	"github.com/opentdf/backend-go/pkg/p11"
 )
 
 // RewrapRequest HTTP request body in JSON
@@ -49,6 +53,7 @@ type customClaims struct {
 
 // Handler decrypts and encrypts the symmetric data key
 func (p *Provider) Handler(w http.ResponseWriter, r *http.Request) {
+	log.Println("REWRAP")
 	log.Printf("headers %s", r.Header)
 	log.Printf("body %s", r.Body)
 	log.Printf("ContentLength %d", r.ContentLength)
@@ -89,6 +94,7 @@ func (p *Provider) Handler(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Println(requestBody.ClientPublicKey)
 	// TODO get OIDC public key
+
 	// Decode PEM entity public key
 	block, _ := pem.Decode([]byte(requestBody.ClientPublicKey))
 	if block == nil {
@@ -102,35 +108,49 @@ func (p *Provider) Handler(w http.ResponseWriter, r *http.Request) {
 		log.Panic(err)
 		return
 	}
-	log.Println(clientPublicKey)
+	
+
 	// nano header
-	log.Println(requestBody.KeyAccess.Header)
-	log.Println(len(requestBody.KeyAccess.Header))
-	s := kaitai.NewStream(bytes.NewReader(requestBody.KeyAccess.Header))
-	n := nano.NewNanotdf()
-	err = n.Read(s, n, n)
+	// log.Println(requestBody.KeyAccess.Header)
+	// log.Println(len(requestBody.KeyAccess.Header))
+	// s := kaitai.NewStream(bytes.NewReader(requestBody.KeyAccess.Header))
+	// n := tdf3.new
+	// err = n.Read(s, n, n)
+	// if err != nil {
+	// 	log.Panic(err)
+	// }
+	// log.Print(n.Header.Length)
+
+	
+	// unwrap using a key from file
+	//ciphertext, _ := hex.DecodeString(requestBody.KeyAccess.WrappedKey)
+	// symmetricKey, err := tdf3.DecryptWithPrivateKey(requestBody.KeyAccess.WrappedKey, &p.PrivateKey)
+	// if err != nil {
+	// 	// FIXME handle error
+	// 	log.Panic(err)
+	// 	return
+	// }
+
+	//unwrap using hsm key
+	symmetricKey, err := p11.DecryptOAEP(&p.Session, &p.PrivateKey,
+		 requestBody.KeyAccess.WrappedKey, crypto.SHA1, nil)
 	if err != nil {
+		// FIXME handle error
 		log.Panic(err)
+		return
 	}
-	log.Print(n.Header.Length)
-	//// unwrap
-	//symmetricKey, err := tdf3.DecryptWithPrivateKey(rewrapRequest.KeyAccess.WrappedKey, &p.PrivateKey)
-	//if err != nil {
-	//	// FIXME handle error
-	//	log.Panic(err)
-	//	return
-	//}
-	//// rewrap
-	//rewrappedKey, err := tdf3.EncryptWithRSAPublicKey(symmetricKey, entityPublicKey)
-	//if err != nil {
-	//	// FIXME handle error
-	//	log.Panic(err)
-	//	return
-	//}
-	// TODO validate policy
-	log.Println()
-	// TODO store policy
-	rewrappedKey := []byte("TODO")
+
+	// rewrap
+	rewrappedKey, err := tdf3.EncryptWithPublicKey(symmetricKey, &clientPublicKey)
+	if err != nil {
+		// FIXME handle error
+		log.Panic(err)
+		return
+	}
+	// // TODO validate policy
+	// log.Println()
+	// // TODO store policy
+	// rewrappedKey := []byte("TODO")
 	responseBytes, err := json.Marshal(&RewrapResponse{
 		EntityWrappedKey: rewrappedKey,
 		SchemaVersion:    schemaVersion,
