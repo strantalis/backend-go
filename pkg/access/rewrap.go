@@ -2,11 +2,13 @@ package access
 
 import (
 	// "bytes"
+	"context"
 	"crypto"
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
 	"log"
+	// "fmt"
 	"net/http"
 	"strings"
 	// "crypto/rsa"
@@ -14,9 +16,11 @@ import (
 
 	// "github.com/kaitai-io/kaitai_struct_go_runtime/kaitai"
 	// "github.com/opentdf/backend-go/pkg/nano"
+	// "github.com/coreos/go-oidc/v3/oidc"
 	"github.com/opentdf/backend-go/pkg/tdf3"
 	"gopkg.in/square/go-jose.v2/jwt"
 	"github.com/opentdf/backend-go/pkg/p11"
+	// "golang.org/x/oauth2"
 )
 
 // RewrapRequest HTTP request body in JSON
@@ -47,9 +51,15 @@ type RewrapResponse struct {
 	SchemaVersion    string `json:"schemaVersion,omitempty"`
 }
 
-type customClaims struct {
+type customClaimsBody struct {
 	RequestBody string `json:"requestBody,omitempty"`
 }
+
+type customClaimsHeader struct {
+	ClientID       string         `json:"clientId"`
+	TDFClaims	   ClaimsObject	  `json:"tdf_claims"`
+}
+
 
 // Handler decrypts and encrypts the symmetric data key
 func (p *Provider) Handler(w http.ResponseWriter, r *http.Request) {
@@ -61,9 +71,34 @@ func (p *Provider) Handler(w http.ResponseWriter, r *http.Request) {
 	if r.ContentLength == 0 {
 		return
 	}
+
+	//////////////// OIDC VERIFY ///////////////
+	//get the raw token
+	oidcRequestToken := r.Header.Get("Authorization")
+	splitToken := strings.Split(oidcRequestToken, "Bearer ")
+	oidcRequestToken = splitToken[1]
+	log.Println(oidcRequestToken)
+
+    // Parse and verify ID Token payload.
+	idToken, err := p.OIDCVerifier.Verify(context.Background(), oidcRequestToken)
+    if err != nil {
+        log.Panic(err)
+		return
+    }
+
+    // Extract custom claims
+    var claims customClaimsHeader
+    if err := idToken.Claims(&claims); err != nil {
+        log.Panic(err)
+		return
+    }
+	log.Println(claims)
+
+
+	//////////////// DECODE BODY EXTRACT CLIENT PUBKEY /////////////////////
 	decoder := json.NewDecoder(r.Body)
 	var rewrapRequest RewrapRequest
-	err := decoder.Decode(&rewrapRequest)
+	err = decoder.Decode(&rewrapRequest)
 	if err != nil {
 		// FIXME handle error
 		log.Panic(err)
@@ -75,16 +110,16 @@ func (p *Provider) Handler(w http.ResponseWriter, r *http.Request) {
 		log.Panic(err)
 		return
 	}
-	c := &jwt.Claims{}
-	c2 := &customClaims{}
-	err = requestToken.UnsafeClaimsWithoutVerification(c, c2)
+	jwt_claims_body := &jwt.Claims{}
+	body_claims := &customClaimsBody{}
+	err = requestToken.UnsafeClaimsWithoutVerification(jwt_claims_body, body_claims)
 	if err != nil {
 		// FIXME handle error
 		log.Panic(err)
 		return
 	}
-	log.Println(c2.RequestBody)
-	decoder = json.NewDecoder(strings.NewReader(c2.RequestBody))
+	log.Println(body_claims.RequestBody)
+	decoder = json.NewDecoder(strings.NewReader(body_claims.RequestBody))
 	var requestBody RequestBody
 	err = decoder.Decode(&requestBody)
 	if err != nil {
@@ -93,7 +128,7 @@ func (p *Provider) Handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Println(requestBody.ClientPublicKey)
-	// TODO get OIDC public key
+  
 
 	// Decode PEM entity public key
 	block, _ := pem.Decode([]byte(requestBody.ClientPublicKey))
@@ -108,6 +143,7 @@ func (p *Provider) Handler(w http.ResponseWriter, r *http.Request) {
 		log.Panic(err)
 		return
 	}
+	// ///////////////////////////////
 	
 
 	// nano header
@@ -131,6 +167,8 @@ func (p *Provider) Handler(w http.ResponseWriter, r *http.Request) {
 	// 	return
 	// }
 
+
+	// ///////////// UNWRAP AND REWRAP //////////////////
 	//unwrap using hsm key
 	symmetricKey, err := p11.DecryptOAEP(&p.Session, &p.PrivateKey,
 		 requestBody.KeyAccess.WrappedKey, crypto.SHA1, nil)
@@ -149,6 +187,7 @@ func (p *Provider) Handler(w http.ResponseWriter, r *http.Request) {
 	}
 	// // TODO validate policy
 	// log.Println()
+
 	// // TODO store policy
 	// rewrappedKey := []byte("TODO")
 	responseBytes, err := json.Marshal(&RewrapResponse{

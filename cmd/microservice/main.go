@@ -61,9 +61,13 @@ func main() {
 		// Discovery returns the OAuth2 endpoints.
 		Endpoint: provider.Endpoint(),
 		// "openid" is a required scope for OpenID Connect flows.
-		Scopes: []string{oidc.ScopeOpenID, "profile", "email"},
+		Scopes: []string{oidc.ScopeOpenID},
 	}
 	log.Println(oauth2Config)
+
+	var verifier = provider.Verifier(&oidc.Config{ClientID: "", SkipClientIDCheck: true})
+
+	kas.OIDCVerifier = verifier
 
 	// PKCS#11
 	pin := os.Getenv("PKCS11_PIN")
@@ -125,9 +129,6 @@ func main() {
 
 	//initialize p11.pkcs11session
 	kas.Session = p11.NewSession(ctx, session)
-
-
-
 
 	//RSA Cert
 	log.Printf("Finding RSA certificate: %s", rsaLabel)
@@ -222,7 +223,7 @@ func main() {
 	// os interrupt
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt)
-	
+
 	// server
 	server := http.Server{
 		Addr:         "127.0.0.1:8080",
