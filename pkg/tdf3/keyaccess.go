@@ -2,7 +2,7 @@ package tdf3
 
 type KeyAccess struct {
 	EncryptedMetadata string `json:"encryptedMetadata,omitempty"`
-	PolicyBinding     string `json:"policyBinding,omitempty"`
+	PolicyBinding     []byte `json:"policyBinding"`
 	Protocol          string `json:"protocol"`
 	Type              string `json:"type"`
 	URL               string `json:"url"`

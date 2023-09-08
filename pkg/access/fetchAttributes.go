@@ -18,7 +18,7 @@ const (
 )
 
 // const attributeHost = "http://attributes:4020"
-const attributeHost = "http://localhost:65432/api/attributes"
+const attributeHost = "https://platform.virtru.us/api/attributes"
 
 func fetchAttributes(ctx context.Context, namespaces []string) ([]attributes.AttributeDefinition, error) {
 	var definitions []attributes.AttributeDefinition

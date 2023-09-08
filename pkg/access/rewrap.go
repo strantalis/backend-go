@@ -12,9 +12,9 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/lestrrat-go/jwx/v2/jwt"
 	"github.com/opentdf/backend-go/pkg/p11"
 	"github.com/opentdf/backend-go/pkg/tdf3"
-	"gopkg.in/square/go-jose.v2/jwt"
 )
 
 type RewrapRequest struct {
@@ -85,6 +85,7 @@ func (p *Provider) Handler(w http.ResponseWriter, r *http.Request) {
 	log.Println(oidcRequestToken)
 
 	// Parse and verify ID Token payload.
+	fmt.Println(p.OIDCVerifier)
 	idToken, err := p.OIDCVerifier.Verify(context.Background(), oidcRequestToken)
 	if err != nil {
 		log.Panic(err)
@@ -109,22 +110,31 @@ func (p *Provider) Handler(w http.ResponseWriter, r *http.Request) {
 		log.Panic(err)
 		return
 	}
-	requestToken, err := jwt.ParseSigned(rewrapRequest.SignedRequestToken)
+	fmt.Println("signed request token: ", rewrapRequest.SignedRequestToken)
+	requestToken, err := jwt.Parse([]byte(rewrapRequest.SignedRequestToken), jwt.WithVerify(false), jwt.WithValidate(false))
 	if err != nil {
 		// FIXME handle error
 		log.Panic(err)
 		return
 	}
-	var jwtClaimsBody jwt.Claims
-	var bodyClaims customClaimsBody
-	err = requestToken.UnsafeClaimsWithoutVerification(jwtClaimsBody, bodyClaims)
-	if err != nil {
+	fmt.Println("Request Token: ", requestToken)
+	jwtClaimsBody, ok := requestToken.Get("requestBody")
+	if !ok {
 		// FIXME handle error
-		log.Panic(err)
+		log.Panic("err missing requestBody")
 		return
 	}
-	log.Println(bodyClaims.RequestBody)
-	decoder = json.NewDecoder(strings.NewReader(bodyClaims.RequestBody))
+	// var bodyClaims customClaimsBody
+	// err = requestToken.UnsafeClaimsWithoutVerification(jwtClaimsBody, bodyClaims)
+	// if err != nil {
+	// 	// FIXME handle error
+	// 	log.Panic(err)
+	// 	return
+	// }
+	requestToken.Get("requestBody")
+	fmt.Println("jwt claims body", jwtClaimsBody)
+	// log.Println(bodyClaims.RequestBody)
+	decoder = json.NewDecoder(strings.NewReader(jwtClaimsBody.(string)))
 	var requestBody RequestBody
 	err = decoder.Decode(&requestBody)
 	if err != nil {
