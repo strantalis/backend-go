@@ -20,9 +20,9 @@ import (
 
 const (
 	profileName = iota
+	oidcEndpoint
 	clientID
 	clientSecret
-	oidcEndpoint
 )
 
 const (
@@ -85,7 +85,11 @@ var configCmd = &cobra.Command{
 				m.(model).inputs[profileName].Value(): otdfConfig,
 			},
 		}
-
+		err = viper.Unmarshal(&config)
+		if err != nil {
+			fmt.Printf("Alas, there's been an error: %v", err)
+			os.Exit(1)
+		}
 		tomlConfig, err := toml.Marshal(&config)
 		if err != nil {
 			fmt.Printf("Alas, there's been an error: %v", err)
@@ -93,6 +97,7 @@ var configCmd = &cobra.Command{
 		}
 		tomlReader := bytes.NewReader(tomlConfig)
 		fmt.Println(string(tomlConfig))
+
 		viper.ReadConfig(tomlReader)
 		homedir, err := os.UserHomeDir()
 		if err != nil {
@@ -117,15 +122,14 @@ var configCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(configCmd)
 
-	// Here you will define your flags and configuration settings.
+	viper.AddConfigPath("$HOME/.opentdf")
+	viper.SetConfigName("config")
+	viper.SetConfigType("toml")
 
-	// Cobra supports Persistent Flags which will work for this command
-	// and all subcommands, e.g.:
-	// configCmd.PersistentFlags().String("foo", "", "A help for foo")
-
-	// Cobra supports local flags which will only run when this command
-	// is called directly, e.g.:
-	// configCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
+	if err := viper.ReadInConfig(); err != nil {
+		fmt.Println("Can't read config:", err)
+		os.Exit(1)
+	}
 }
 
 func initialModel() model {
