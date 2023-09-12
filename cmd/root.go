@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
 // rootCmd represents the base command when called without any subcommands
@@ -34,6 +35,9 @@ func Execute() {
 }
 
 func init() {
+	viper.AddConfigPath("$HOME/.opentdf")
+	viper.SetConfigName("config")
+	viper.SetConfigType("toml")
 	// Here you will define your flags and configuration settings.
 	// Cobra supports persistent flags, which, if defined here,
 	// will be global for your application.
