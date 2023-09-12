@@ -9,8 +9,10 @@ import (
 	"log"
 	"os"
 
-	"github.com/opentdf/backend-go/pkg/tdf3"
+	"github.com/opentdf/backend-go/internal/auth"
+	tdf3 "github.com/opentdf/backend-go/pkg/tdf3/client"
 	"github.com/spf13/cobra"
+	"golang.org/x/oauth2/clientcredentials"
 )
 
 // contentCmd represents the content command
@@ -51,10 +53,11 @@ func content(cmd *cobra.Command, args []string) {
 		log.Fatal(err)
 	}
 
-	key, err := cmd.Flags().GetString("key")
-	if err != nil {
-		log.Fatal(err)
-	}
+	// Will use this for split key
+	// key, err := cmd.Flags().GetString("key")
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
 
 	bcreds, err := os.ReadFile("creds.json")
 	if err != nil {
@@ -66,8 +69,23 @@ func content(cmd *cobra.Command, args []string) {
 		log.Fatal(err)
 	}
 
+	conf := auth.ClientCredentials{
+		Config: &clientcredentials.Config{
+			ClientID:     "tdf-client",
+			ClientSecret: "123-456",
+			Scopes:       []string{"openid", "profile", "email"},
+			TokenURL:     "https://platform.virtru.us/auth/realms/tdf/protocol/openid-connect/token", //"https://dev-yzqjwcakzru3kxes.us.auth0.com/oauth/token",
+		},
+		PublicKey: creds.PoP.PublicKey,
+	}
+
+	oauth2Client, err := conf.Client()
+	if err != nil {
+		log.Fatal(err)
+	}
 	client, err := tdf3.NewTDFClient(tdf3.TDFClientOptions{
-		AccessToken: creds.Tokens.AccessToken,
+		KasEndpoint: "https://platform.virtru.us/api/kas",
+		HttpClient:  oauth2Client,
 		PrivKey:     creds.PoP.PrivateKey,
 		PubKey:      creds.PoP.PublicKey,
 	})
@@ -79,9 +97,9 @@ func content(cmd *cobra.Command, args []string) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	content, err := client.GetContent(tdf, key)
+	content, err := client.GetContent(tdf)
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println(string(content))
+	fmt.Println("Decrypted Content: ", string(content))
 }

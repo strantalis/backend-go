@@ -9,7 +9,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/opentdf/backend-go/pkg/tdf3"
+	tdf3 "github.com/opentdf/backend-go/pkg/tdf3/client"
 	"github.com/spf13/cobra"
 )
 

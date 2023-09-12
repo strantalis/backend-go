@@ -11,7 +11,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/opentdf/backend-go/pkg/tdf3"
+	tdf3 "github.com/opentdf/backend-go/pkg/tdf3/client"
 	"github.com/spf13/cobra"
 )
 
@@ -99,7 +99,7 @@ func generateTDF(cmd *cobra.Command, args []string) {
 	}
 
 	var out []byte
-	if out, err = client.GenerateTDF(reader); err != nil {
+	if out, err = client.Create(reader); err != nil {
 		log.Fatal(err)
 	}
 
