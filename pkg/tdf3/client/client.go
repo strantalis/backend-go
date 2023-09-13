@@ -265,45 +265,51 @@ func (client *Client) GetContent(file io.Reader, writer io.Writer) error {
 		return err
 	}
 
-	var (
-		rewrapResponse []*kas.RewrapResponse
-	)
-
 	/*
 		Start of KAS ReWrap Request to get data key that actually encrypts the content
 	*/
 
 	// Build kas rewrap request object
-	keyAccessObjs := tdf.EncryptionInformation.FindRewraps()
+	// keyAccessObjs := tdf.EncryptionInformation.Key()
 
 	privateKey, err := tdfCrypto.ParsePrivateKey(client.PrivKey)
 	if err != nil {
 		return err
 	}
 
-	for _, ka := range keyAccessObjs {
-		var rewrapRequest = new(kas.RequestBody)
+	switch tdf.EncryptionInformation.Type {
+	case "split":
+		for _, ka := range tdf.EncryptionInformation.KeyAccess {
+			// Need to figure out how to handle other types
+			if ka.Type == "rewrap" {
+				var (
+					rewrapRequest = new(kas.RequestBody)
+					rewrapResponse []*kas.RewrapResponse
+				)
+				rewrapRequest.KeyAccess = ka
+				rewrapRequest.ClientPublicKey = string(client.PubKey)
+				rewrapRequest.Policy = tdf.EncryptionInformation.Policy
+				resp, err := client.kas.RemoteRewrap(rewrapRequest, privateKey)
+				// Get Wrapped Key
+				if err != nil {
+					return err
+				}
 
-		rewrapRequest.KeyAccess = ka
-
-		rewrapRequest.ClientPublicKey = string(client.PubKey)
-
-		rewrapRequest.Policy = tdf.EncryptionInformation.Policy
-
-		resp, err := client.kas.RemoteRewrap(rewrapRequest, privateKey)
-		rewrapResponse = append(rewrapResponse, resp)
-		// Get Wrapped Key
-		if err != nil {
-			return err
+				// Unwrap our key from KAS
+				unWrappedKey, err := tdfCrypto.DecryptOAEP(privateKey.(*rsa.PrivateKey), rewrapResponse.EntityWrappedKey)
+				if err != nil {
+					return err
+				}
+				
+				rewraps = append(rewraps, ka)
+			}
 		}
+	case "shamir":
+		fmt.Println("TODO: shamir")
+	default:
+		fmt.Println("Not a valid encryption type")
 
-	}
-
-	// Unwrap our key from KAS
-	unWrappedKey, err := tdfCrypto.DecryptOAEP(privateKey.(*rsa.PrivateKey), rewrapResponse.EntityWrappedKey)
-	if err != nil {
-		return err
-	}
+	
 
 	// Before we try to decrypt we need to valid the integrity of the rootSignature
 	if err := tdf.EncryptionInformation.IntegrityInformation.Validate(unWrappedKey); err != nil {

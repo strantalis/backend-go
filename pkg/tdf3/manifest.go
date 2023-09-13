@@ -28,17 +28,9 @@ type EncryptionMethod struct {
 	IV         []byte `json:"iv"`
 }
 
-func (k *EncryptionInformation) FindRewraps() []KeyAccess {
+// Get payload
+func (k *EncryptionInformation) Key() []KeyAccess {
 	var rewraps []KeyAccess
-	for _, ka := range k.KeyAccess {
-		// What do we do if we have multiple rewraps in the key access?
-		if ka.Type == "rewrap" {
-			rewraps = append(rewraps, ka)
-			return rewraps
-		}
-		if ka.Type == "split" {
-			rewraps = append(rewraps, ka)
-		}
-	}
+
 	return rewraps
 }
