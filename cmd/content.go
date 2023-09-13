@@ -4,20 +4,17 @@ Copyright © 2023 NAME HERE <EMAIL ADDRESS>
 package cmd
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
 
-	"github.com/opentdf/backend-go/internal/auth"
+	"github.com/opentdf/backend-go/pkg/oidc"
 	tdf3 "github.com/opentdf/backend-go/pkg/tdf3/client"
 	"github.com/pelletier/go-toml/v2"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"golang.org/x/oauth2"
-	"golang.org/x/oauth2/clientcredentials"
 )
 
 // contentCmd represents the content command
@@ -82,31 +79,19 @@ func content(cmd *cobra.Command, args []string) {
 		log.Fatal(err)
 	}
 
-	oidcEndpoint := viper.GetString(fmt.Sprintf("profiles.%s.oidcendpoint", opentdfCredentials.Profile))
+	oidcDiscoveryEndpoint := viper.GetString(fmt.Sprintf("profiles.%s.oidcdiscoveryendpoint", opentdfCredentials.Profile))
 	clientID := viper.GetString(fmt.Sprintf("profiles.%s.clientid", opentdfCredentials.Profile))
 	clientSecret := viper.GetString(fmt.Sprintf("profiles.%s.clientsecret", opentdfCredentials.Profile))
-
-	if clientSecret != "" {
-		conf := auth.ClientCredentials{
-			Config: &clientcredentials.Config{
-				ClientID:     clientID,
-				ClientSecret: clientSecret,
-				Scopes:       []string{"openid", "profile", "email"},
-				TokenURL:     fmt.Sprintf("%s/openid-connect/token", oidcEndpoint), //"https://dev-yzqjwcakzru3kxes.us.auth0.com/oauth/token",
-			},
-			PublicKey: opentdfCredentials.PublicKey,
-		}
-
-		oauth2Client, err = conf.Client()
-		if err != nil {
-			log.Fatal(err)
-		}
-
-	} else {
-		ts := &auth.OpenTdfTokenSource{
-			OpenTdfToken: opentdfCredentials.Tokens,
-		}
-		oauth2Client = oauth2.NewClient(context.Background(), ts)
+	oClient, err := oidc.NewOidcClient(oidc.OidcConfig{
+		ClientID:          clientID,
+		ClientSecret:      clientSecret,
+		DiscoveryEndpoint: oidcDiscoveryEndpoint,
+		PublicKey:         opentdfCredentials.PublicKey,
+		Tokens:            opentdfCredentials.Tokens,
+	})
+	oauth2Client, err = oClient.Client()
+	if err != nil {
+		log.Fatal(err)
 	}
 	kasEndpoint := viper.GetString(fmt.Sprintf("profiles.%s.kasendpoint", opentdfCredentials.Profile))
 
