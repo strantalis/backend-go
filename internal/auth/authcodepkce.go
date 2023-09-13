@@ -22,7 +22,12 @@ import (
 
 type AuthorizaionCodePKCE struct {
 	Oauth2Config *oauth2.Config
+	Tokens       *oauth2.Token
 	PublicKey    []byte
+}
+
+type OpenTdfTokenSource struct {
+	OpenTdfToken *oauth2.Token
 }
 
 func (acp *AuthorizaionCodePKCE) Login() (*oauth2.Token, error) {
@@ -71,14 +76,17 @@ func (acp *AuthorizaionCodePKCE) Login() (*oauth2.Token, error) {
 
 		// Build PoP Request with refresh token to get tdf_claims in jwt
 		formBody := bytes.NewBufferString(fmt.Sprintf("grant_type=refresh_token&refresh_token=%s&client_id=%s", token.RefreshToken, acp.Oauth2Config.ClientID))
-		req, err := http.NewRequest(http.MethodPost, "https://platform.virtru.us/auth/realms/tdf/protocol/openid-connect/token", formBody)
-		fmt.Println(req.URL.String())
+		req, err := http.NewRequest(http.MethodPost, acp.Oauth2Config.Endpoint.TokenURL, formBody)
+		if err != nil {
+			return
+		}
 		req.Header.Set("X-VirtruPubKey", base64.StdEncoding.EncodeToString(acp.PublicKey))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			log.Fatalf("Error getting token: %v\n", err)
 		}
+		defer resp.Body.Close()
 		err = json.NewDecoder(resp.Body).Decode(&tokens)
 		if err != nil {
 			log.Fatalf("Error decoding token: %v\n", err)
@@ -87,7 +95,6 @@ func (acp *AuthorizaionCodePKCE) Login() (*oauth2.Token, error) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode("Return to the CLI to continue.")
-		fmt.Println("Shutting down HTTP server...")
 
 		// Send a value to the stop channel to simulate the SIGINT signal.
 		stop <- syscall.SIGINT
@@ -113,9 +120,18 @@ func (acp *AuthorizaionCodePKCE) Login() (*oauth2.Token, error) {
 
 	if err := srv.Shutdown(ctx); err != nil {
 		log.Printf("Failed to shutdown HTTP server gracefully: %v", err)
-		return tokens, err
+		return nil, err
 	}
+	acp.Tokens = tokens
 	return tokens, nil
+}
+
+func (acp *AuthorizaionCodePKCE) Client() (*http.Client, error) {
+	tokens, err := acp.Oauth2Config.TokenSource(context.Background(), acp.Tokens).Token()
+	if err != nil {
+		return nil, err
+	}
+	return acp.Oauth2Config.Client(context.Background(), tokens), nil
 }
 
 func openBrowser(url string) error {
@@ -152,4 +168,8 @@ func generateCodeVerifier() (string, error) {
 func generateCodeChallenge(verifier string) string {
 	hash := sha256.Sum256([]byte(verifier))
 	return base64.RawURLEncoding.EncodeToString(hash[:])
+}
+
+func (ots *OpenTdfTokenSource) Token() (*oauth2.Token, error) {
+	return ots.OpenTdfToken, nil
 }

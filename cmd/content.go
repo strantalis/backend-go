@@ -4,90 +4,104 @@ Copyright © 2023 NAME HERE <EMAIL ADDRESS>
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"os"
 
-	"github.com/opentdf/backend-go/internal/auth"
+	"github.com/opentdf/backend-go/pkg/oidc"
 	tdf3 "github.com/opentdf/backend-go/pkg/tdf3/client"
+	"github.com/pelletier/go-toml/v2"
 	"github.com/spf13/cobra"
-	"golang.org/x/oauth2/clientcredentials"
+	"github.com/spf13/viper"
 )
 
 // contentCmd represents the content command
 var contentCmd = &cobra.Command{
 	Use:   "content",
-	Short: "A brief description of your command",
-	Long: `A longer description that spans multiple lines and likely contains examples
-and usage of using your command. For example:
-
-Cobra is a CLI library for Go that empowers applications.
-This application is a tool to generate the needed files
-to quickly create a Cobra application.`,
-	Run: content,
+	Short: "Get the content of a TDF",
+	Run:   content,
 }
 
 func init() {
 	rootCmd.AddCommand(contentCmd)
 
-	// Here you will define your flags and configuration settings.
+	// homedir, err := os.UserHomeDir()
+	// if err != nil {
+	// 	log.Println(err)
+	// 	os.Exit(1)
+	// }
+	// viper.AddConfigPath(fmt.Sprintf("%s/.opentdf", homedir))
+	// viper.SetConfigName("config")
+	// viper.SetConfigType("toml")
 
-	// Cobra supports Persistent Flags which will work for this command
-	// and all subcommands, e.g.:
-	// contentCmd.PersistentFlags().String("foo", "", "A help for foo")
-
-	// Cobra supports local flags which will only run when this command
-	// is called directly, e.g.:
-	// contentCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
 	contentCmd.Flags().String("file", "", "TDF file to extract encrypted payload from")
-	contentCmd.Flags().String("key", "", "Key to decrypt payload")
-
-	// contentCmd.MarkFlagRequired("key")
+	contentCmd.Flags().String("output", "stdout", "Where to write the decrypted payload file or stdout")
+	contentCmd.Flags().String("output-file", "", "Output file to write decrypted content to")
 
 }
 
 func content(cmd *cobra.Command, args []string) {
+	var (
+		opentdfCredentials OpenTDFCredentials
+		oauth2Client       *http.Client
+	)
+
+	if err := viper.ReadInConfig(); err != nil {
+		fmt.Println("Can't read config:", err)
+		os.Exit(1)
+	}
+
 	file, err := cmd.Flags().GetString("file")
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// Will use this for split key
-	// key, err := cmd.Flags().GetString("key")
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
-
-	bcreds, err := os.ReadFile("creds.json")
-	if err != nil {
-		log.Fatal(err)
-	}
-	creds := new(Credentials)
-	err = json.Unmarshal(bcreds, &creds)
+	output, err := cmd.Flags().GetString("output")
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	conf := auth.ClientCredentials{
-		Config: &clientcredentials.Config{
-			ClientID:     "tdf-client",
-			ClientSecret: "123-456",
-			Scopes:       []string{"openid", "profile", "email"},
-			TokenURL:     "https://platform.virtru.us/auth/realms/tdf/protocol/openid-connect/token", //"https://dev-yzqjwcakzru3kxes.us.auth0.com/oauth/token",
-		},
-		PublicKey: creds.PoP.PublicKey,
-	}
-
-	oauth2Client, err := conf.Client()
+	outputFile, err := cmd.Flags().GetString("output-file")
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	homedir, err := os.UserHomeDir()
+	if err != nil {
+		log.Println(err)
+		os.Exit(1)
+	}
+	byteCredentials, err := os.ReadFile(fmt.Sprintf("%s/.opentdf/credentials.toml", homedir))
+	if err != nil {
+		log.Fatal(err)
+	}
+	if err = toml.Unmarshal(byteCredentials, &opentdfCredentials); err != nil {
+		log.Fatal(err)
+	}
+
+	oidcDiscoveryEndpoint := viper.GetString(fmt.Sprintf("profiles.%s.oidcdiscoveryendpoint", opentdfCredentials.Profile))
+	clientID := viper.GetString(fmt.Sprintf("profiles.%s.clientid", opentdfCredentials.Profile))
+	clientSecret := viper.GetString(fmt.Sprintf("profiles.%s.clientsecret", opentdfCredentials.Profile))
+	oClient, err := oidc.NewOidcClient(oidc.OidcConfig{
+		ClientID:          clientID,
+		ClientSecret:      clientSecret,
+		DiscoveryEndpoint: oidcDiscoveryEndpoint,
+		PublicKey:         opentdfCredentials.PublicKey,
+		Tokens:            opentdfCredentials.Tokens,
+	})
+	oauth2Client, err = oClient.Client()
+	if err != nil {
+		log.Fatal(err)
+	}
+	kasEndpoint := viper.GetString(fmt.Sprintf("profiles.%s.kasendpoint", opentdfCredentials.Profile))
+
 	client, err := tdf3.NewTDFClient(tdf3.TDFClientOptions{
-		KasEndpoint: "https://platform.virtru.us/api/kas",
+		KasEndpoint: kasEndpoint,
 		HttpClient:  oauth2Client,
-		PrivKey:     creds.PoP.PrivateKey,
-		PubKey:      creds.PoP.PublicKey,
+		PrivKey:     opentdfCredentials.PrivateKey,
+		PubKey:      opentdfCredentials.PublicKey,
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -97,9 +111,20 @@ func content(cmd *cobra.Command, args []string) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	content, err := client.GetContent(tdf)
+
+	var w io.Writer
+	switch output {
+	case "stdout":
+		w = os.Stdout
+	case "file":
+		w, err = os.Create(outputFile)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+	defer w.(*os.File).Close()
+	err = client.GetContent(tdf, w)
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println("Decrypted Content: ", string(content))
 }
