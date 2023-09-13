@@ -266,8 +266,7 @@ func (client *Client) GetContent(file io.Reader, writer io.Writer) error {
 	}
 
 	var (
-		rewrapRequest  = new(kas.RequestBody)
-		rewrapResponse = new(kas.RewrapResponse)
+		rewrapResponse []*kas.RewrapResponse
 	)
 
 	/*
@@ -275,21 +274,29 @@ func (client *Client) GetContent(file io.Reader, writer io.Writer) error {
 	*/
 
 	// Build kas rewrap request object
-	rewrapRequest.KeyAccess = tdf.EncryptionInformation.KeyAccess[0]
-
-	rewrapRequest.ClientPublicKey = string(client.PubKey)
-
-	rewrapRequest.Policy = tdf.EncryptionInformation.Policy
+	keyAccessObjs := tdf.EncryptionInformation.FindRewraps()
 
 	privateKey, err := tdfCrypto.ParsePrivateKey(client.PrivKey)
 	if err != nil {
 		return err
 	}
 
-	// Get Wrapped Key
-	rewrapResponse, err = client.kas.RemoteRewrap(rewrapRequest, privateKey)
-	if err != nil {
-		return err
+	for _, ka := range keyAccessObjs {
+		var rewrapRequest = new(kas.RequestBody)
+
+		rewrapRequest.KeyAccess = ka
+
+		rewrapRequest.ClientPublicKey = string(client.PubKey)
+
+		rewrapRequest.Policy = tdf.EncryptionInformation.Policy
+
+		resp, err := client.kas.RemoteRewrap(rewrapRequest, privateKey)
+		rewrapResponse = append(rewrapResponse, resp)
+		// Get Wrapped Key
+		if err != nil {
+			return err
+		}
+
 	}
 
 	// Unwrap our key from KAS
