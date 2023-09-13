@@ -34,7 +34,23 @@ func (at *Attribute) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &serAt); err != nil {
 		return err
 	}
-	attr := serAt.Attribute
+
+	return at.ParseAttributeFromString(serAt.Attribute)
+}
+
+func (at Attribute) MarshalJSON() ([]byte, error) {
+	var serialization = serializedAttr{
+		Attribute: fmt.Sprintf("%s/attr/%s/value/%s", at.Authority, url.PathEscape(at.Name), url.PathEscape(at.Value)),
+	}
+
+	if bytes, err := json.Marshal(serialization); err != nil {
+		return nil, err
+	} else {
+		return bytes, nil
+	}
+}
+
+func (at *Attribute) ParseAttributeFromString(attr string) error {
 	valStart := strings.LastIndex(attr, "/")
 
 	if valStart == -1 {
@@ -48,7 +64,7 @@ func (at *Attribute) UnmarshalJSON(data []byte) error {
 	}
 
 	idx := strings.LastIndex(attr[:valStart], "/")
-	if attr[idx+1:valStart] != "val" {
+	if attr[idx+1:valStart] != "value" {
 		return fmt.Errorf("illegal attribute [%s], missing attribute value", attr)
 	}
 

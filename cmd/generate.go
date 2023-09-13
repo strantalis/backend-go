@@ -11,7 +11,8 @@ import (
 	"os"
 	"strings"
 
-	tdf3 "github.com/opentdf/backend-go/pkg/tdf3/client"
+	"github.com/opentdf/backend-go/pkg/tdf3"
+	"github.com/opentdf/backend-go/pkg/tdf3/client"
 	"github.com/spf13/cobra"
 )
 
@@ -35,6 +36,7 @@ func init() {
 	generateCmd.Flags().String("text", "", "Text to wrap with TDF")
 	generateCmd.Flags().String("output", "file://test.tdf", "Output file")
 	generateCmd.Flags().Int("keysize", 256, "Key size")
+	generateCmd.Flags().StringArray("attribute", []string{}, "Attribute to apply to the TDF")
 }
 
 func generateTDF(cmd *cobra.Command, args []string) {
@@ -57,6 +59,11 @@ func generateTDF(cmd *cobra.Command, args []string) {
 	}
 
 	keySize, err := cmd.Flags().GetInt("keysize")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	attributes, err := cmd.Flags().GetStringArray("attribute")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -93,13 +100,22 @@ func generateTDF(cmd *cobra.Command, args []string) {
 		reader = bytes.NewBufferString(text)
 	}
 
-	client, err := tdf3.NewTDFClient(tdf3.TDFClientOptions{KeyLength: &keySize, KasEndpoint: "https://platform.virtru.us/api/kas"})
+	client, err := client.NewTDFClient(client.TDFClientOptions{KeyLength: &keySize, KasEndpoint: "https://platform.virtru.us/api/kas"})
 	if err != nil {
 		log.Fatal(err)
 	}
 
+	var parsedAttributes = []tdf3.Attribute{}
+	for _, attr := range attributes {
+		var parsedAttr tdf3.Attribute
+		if err := parsedAttr.ParseAttributeFromString(attr); err != nil {
+			log.Fatal(err)
+		}
+		parsedAttributes = append(parsedAttributes, parsedAttr)
+	}
+
 	var out []byte
-	if out, err = client.Create(reader); err != nil {
+	if out, err = client.Create(reader, parsedAttributes); err != nil {
 		log.Fatal(err)
 	}
 
