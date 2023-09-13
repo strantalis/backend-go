@@ -243,26 +243,26 @@ func (client *Client) Create(plainText io.Reader) ([]byte, error) {
 }
 
 // We should probably accept an IO Writer Interface here as well
-func (client *Client) GetContent(file io.Reader) ([]byte, error) {
+func (client *Client) GetContent(file io.Reader, writer io.Writer) error {
 	//Can we set the size of the buffer to the segment size?
 	buff := bytes.NewBuffer([]byte{})
 
 	// Is this the best way to get the size of the file?
 	size, err := io.Copy(buff, file)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	reader := bytes.NewReader(buff.Bytes())
 	tdfZip, err := zip.NewReader(reader, size)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	// We need to work with the manifest from the zip archive
 	tdf, err := client.GetManifest(buff)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	var (
@@ -283,36 +283,35 @@ func (client *Client) GetContent(file io.Reader) ([]byte, error) {
 
 	privateKey, err := tdfCrypto.ParsePrivateKey(client.PrivKey)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	// Get Wrapped Key
 	rewrapResponse, err = client.kas.RemoteRewrap(rewrapRequest, privateKey)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	// Unwrap our key from KAS
 	unWrappedKey, err := tdfCrypto.DecryptOAEP(privateKey.(*rsa.PrivateKey), rewrapResponse.EntityWrappedKey)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	// Before we try to decrypt we need to valid the integrity of the rootSignature
 	if err := tdf.EncryptionInformation.IntegrityInformation.Validate(unWrappedKey); err != nil {
-		return nil, err
+		return err
 	}
 
 	gcm, err := tdfCrypto.NewGCM(unWrappedKey)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	var plainText []byte
 	// Open Payload File
 	payload, err := tdfZip.Open("0.payload")
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer payload.Close()
 
@@ -325,20 +324,21 @@ func (client *Client) GetContent(file io.Reader) ([]byte, error) {
 			if errors.Is(err, io.EOF) {
 				break
 			}
-			return nil, err
+			return err
 		}
 
 		nonce, cipherText := chunk[:gcm.NonceSize()], chunk[gcm.NonceSize():]
 		pt, err := gcm.Open(nil, nonce, cipherText, nil)
 		if err != nil {
-			return nil, errors.Join(errors.New("failed to decrypt segment"), err)
+			return errors.Join(errors.New("failed to decrypt segment"), err)
 		}
-
-		plainText = append(plainText, pt...)
-
+		_, err = writer.Write(pt)
+		if err != nil {
+			return err
+		}
 	}
 
-	return plainText, nil
+	return nil
 }
 
 func (client *Client) GetManifest(file io.Reader) (tdf3.TDF, error) {

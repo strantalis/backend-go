@@ -19,6 +19,7 @@ import (
 )
 
 type OpenTDFCredentials struct {
+	Profile    string        `toml:"profile"`
 	Tokens     *oauth2.Token `toml:"tokens"`
 	PrivateKey []byte        `toml:"privateKey"`
 	PublicKey  []byte        `toml:"publicKey"`
@@ -65,6 +66,8 @@ func login(cmd *cobra.Command, args []string) {
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	opentdfCredentials.Profile = profile
 
 	clientID := viper.GetString(fmt.Sprintf("profiles.%s.clientid", profile))
 	oidcEndpoint := viper.GetString(fmt.Sprintf("profiles.%s.oidcendpoint", profile))

@@ -6,13 +6,14 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
 
-	"github.com/BurntSushi/toml"
 	"github.com/opentdf/backend-go/internal/auth"
 	tdf3 "github.com/opentdf/backend-go/pkg/tdf3/client"
+	"github.com/pelletier/go-toml/v2"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"golang.org/x/oauth2"
@@ -29,26 +30,41 @@ var contentCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(contentCmd)
 
-	viper.AddConfigPath("$HOME/.opentdf")
+	homedir, err := os.UserHomeDir()
+	if err != nil {
+		log.Println(err)
+		os.Exit(1)
+	}
+	viper.AddConfigPath(fmt.Sprintf("%s/.opentdf", homedir))
 	viper.SetConfigName("config")
 	viper.SetConfigType("toml")
-
 	if err := viper.ReadInConfig(); err != nil {
 		fmt.Println("Can't read config:", err)
 		os.Exit(1)
 	}
 
 	contentCmd.Flags().String("file", "", "TDF file to extract encrypted payload from")
+	contentCmd.Flags().String("output", "stdout", "Where to write the decrypted payload file or stdout")
+	contentCmd.Flags().String("output-file", "", "Output file to write decrypted content to")
 
 }
 
 func content(cmd *cobra.Command, args []string) {
 	var (
-		opentdfConfig      OpenTDFConfig
 		opentdfCredentials OpenTDFCredentials
 		oauth2Client       *http.Client
 	)
 	file, err := cmd.Flags().GetString("file")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	output, err := cmd.Flags().GetString("output")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	outputFile, err := cmd.Flags().GetString("output-file")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -66,18 +82,17 @@ func content(cmd *cobra.Command, args []string) {
 		log.Fatal(err)
 	}
 
-	if err = viper.Unmarshal(&opentdfConfig); err != nil {
-		log.Fatal(err)
-	}
+	oidcEndpoint := viper.GetString(fmt.Sprintf("profiles.%s.oidcendpoint", opentdfCredentials.Profile))
+	clientID := viper.GetString(fmt.Sprintf("profiles.%s.clientid", opentdfCredentials.Profile))
+	clientSecret := viper.GetString(fmt.Sprintf("profiles.%s.clientsecret", opentdfCredentials.Profile))
 
-	if opentdfConfig.ClientSecret != "" {
-
+	if clientSecret != "" {
 		conf := auth.ClientCredentials{
 			Config: &clientcredentials.Config{
-				ClientID:     opentdfConfig.ClientID,
-				ClientSecret: opentdfConfig.ClientSecret,
+				ClientID:     clientID,
+				ClientSecret: clientSecret,
 				Scopes:       []string{"openid", "profile", "email"},
-				TokenURL:     fmt.Sprintf("%s/openid-connect/token", opentdfConfig.OidcEndpoint), //"https://dev-yzqjwcakzru3kxes.us.auth0.com/oauth/token",
+				TokenURL:     fmt.Sprintf("%s/openid-connect/token", oidcEndpoint), //"https://dev-yzqjwcakzru3kxes.us.auth0.com/oauth/token",
 			},
 			PublicKey: opentdfCredentials.PublicKey,
 		}
@@ -93,9 +108,10 @@ func content(cmd *cobra.Command, args []string) {
 		}
 		oauth2Client = oauth2.NewClient(context.Background(), ts)
 	}
+	kasEndpoint := viper.GetString(fmt.Sprintf("profiles.%s.kasendpoint", opentdfCredentials.Profile))
 
 	client, err := tdf3.NewTDFClient(tdf3.TDFClientOptions{
-		KasEndpoint: "https://platform.virtru.us/api/kas",
+		KasEndpoint: kasEndpoint,
 		HttpClient:  oauth2Client,
 		PrivKey:     opentdfCredentials.PrivateKey,
 		PubKey:      opentdfCredentials.PublicKey,
@@ -108,9 +124,20 @@ func content(cmd *cobra.Command, args []string) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	content, err := client.GetContent(tdf)
+
+	var w io.Writer
+	switch output {
+	case "stdout":
+		w = os.Stdout
+	case "file":
+		w, err = os.Create(outputFile)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+	defer w.(*os.File).Close()
+	err = client.GetContent(tdf, w)
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println("Decrypted Content: ", string(content))
 }

@@ -21,6 +21,7 @@ import (
 const (
 	profileName = iota
 	oidcEndpoint
+	kasEndpoint
 	clientID
 	clientSecret
 )
@@ -50,9 +51,10 @@ type Config struct {
 }
 
 type OpenTDFConfig struct {
-	OidcEndpoint string `toml:"oidcEndpoint"`
-	ClientID     string `toml:"clientID"`
-	ClientSecret string `toml:"clientSecret,omitempty"`
+	KasEndpoint  string `toml:"kasendpoint"`
+	OidcEndpoint string `toml:"oidcendpoint"`
+	ClientID     string `toml:"clientid"`
+	ClientSecret string `toml:"clientsecret,omitempty"`
 }
 
 // configCmd represents the config command
@@ -72,10 +74,10 @@ var configCmd = &cobra.Command{
 			fmt.Print("can't assert model")
 			os.Exit(1)
 		}
-
 		otdfConfig := OpenTDFConfig{
 			OidcEndpoint: m.(model).inputs[oidcEndpoint].Value(),
 			ClientID:     m.(model).inputs[clientID].Value(),
+			KasEndpoint:  m.(model).inputs[kasEndpoint].Value(),
 		}
 		if m.(model).inputs[clientSecret].Value() != "" {
 			otdfConfig.ClientSecret = m.(model).inputs[clientSecret].Value()
@@ -96,7 +98,6 @@ var configCmd = &cobra.Command{
 			os.Exit(1)
 		}
 		tomlReader := bytes.NewReader(tomlConfig)
-		fmt.Println(string(tomlConfig))
 
 		viper.ReadConfig(tomlReader)
 		homedir, err := os.UserHomeDir()
@@ -115,7 +116,7 @@ var configCmd = &cobra.Command{
 			fmt.Printf("Alas, there's been an error: %v", err)
 			os.Exit(1)
 		}
-
+		fmt.Println("Config saved!")
 	},
 }
 
@@ -133,7 +134,7 @@ func init() {
 }
 
 func initialModel() model {
-	var inputs []textinput.Model = make([]textinput.Model, 4)
+	var inputs []textinput.Model = make([]textinput.Model, 5)
 	inputs[profileName] = textinput.New()
 	inputs[profileName].Placeholder = "Profile Name"
 	inputs[profileName].Focus()
@@ -143,6 +144,10 @@ func initialModel() model {
 	inputs[oidcEndpoint].Placeholder = "OIDC Endpoint"
 	inputs[oidcEndpoint].CharLimit = 156
 	inputs[oidcEndpoint].Width = 100
+	inputs[kasEndpoint] = textinput.New()
+	inputs[kasEndpoint].Placeholder = "Kas Endpoint"
+	inputs[kasEndpoint].CharLimit = 156
+	inputs[kasEndpoint].Width = 100
 	inputs[clientID] = textinput.New()
 	inputs[clientID].Placeholder = "Client ID"
 	inputs[clientID].CharLimit = 156
@@ -205,6 +210,7 @@ func (m model) View() string {
  %s  %s
  %s  %s
  %s  %s
+ %s  %s
 
  %s
 `,
@@ -212,6 +218,8 @@ func (m model) View() string {
 		m.inputs[profileName].View(),
 		inputStyle.Width(24).Render("OIDC Endpoint"),
 		m.inputs[oidcEndpoint].View(),
+		inputStyle.Width(24).Render("KAS Endpoint"),
+		m.inputs[kasEndpoint].View(),
 		inputStyle.Width(24).Render("Client ID"),
 		m.inputs[clientID].View(),
 		inputStyle.Width(24).Render("Client Secret"),
