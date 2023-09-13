@@ -114,13 +114,14 @@ func (client *Client) Create(plainText io.Reader) ([]byte, error) {
 	tdf.Payload.Type = "reference"
 	tdf.Payload.URL = "0.payload"
 	tdf.Payload.Protocol = payloadProtocol
+	tdf.Payload.IsEncrypted = true
 
 	// We should poke at Method. Still don't understand where this is used.
 	tdf.EncryptionInformation.Method.Algorithm = fmt.Sprintf(encryptionAlgorithm, client.keyLength)
 	// What does streamable mean?
 	tdf.EncryptionInformation.Method.Streamable = true
 	// I don't think IV is needed or used
-	// tdf.EncryptionInformation.Method.IV = iv
+	tdf.EncryptionInformation.Method.IV = []byte("")
 
 	zipBuf := new(bytes.Buffer)
 	tdfZip := zip.NewWriter(zipBuf)
@@ -128,6 +129,17 @@ func (client *Client) Create(plainText io.Reader) ([]byte, error) {
 	buf := make([]byte, segmentSize)
 	var segments []tdf3.Segment
 	chunkCount := 0
+
+	// Define payload file in zip
+	payload := &zip.FileHeader{
+		Name:   fmt.Sprintf("%d.payload", 0),
+		Method: zip.Store,
+	}
+
+	chunkWriter, err := tdfZip.CreateHeader(payload)
+	if err != nil {
+		return nil, err
+	}
 
 	// Chunk the payload and encrypt into segments
 	for {
@@ -154,31 +166,23 @@ func (client *Client) Create(plainText io.Reader) ([]byte, error) {
 
 		// Build new segment
 		segment := tdf3.Segment{}
-		segment.Build(nonce, key)
+
+		segment.Build(cipherText, key)
 		segments = append(segments, segment)
 
-		// Add chunk to payload
-		chunk := &zip.FileHeader{
-			Name:   fmt.Sprintf("%d.payload", chunkCount),
-			Method: zip.Store,
-		}
-
-		chunkWriter, err := tdfZip.CreateHeader(chunk)
-		if err != nil {
-			return nil, err
-		}
 		chunkWriter.Write(cipherText)
 
 		chunkCount++
+
 	}
 
 	// Build integrity information
 	tdf.EncryptionInformation.IntegrityInformation.Segments = segments
 	tdf.EncryptionInformation.IntegrityInformation.SegmentHashAlg = "GMAC"
 	tdf.EncryptionInformation.IntegrityInformation.SegmentSizeDefault = segmentSize
-	tdf.EncryptionInformation.IntegrityInformation.EncryptedSegmentSizeDefault = segmentSize
+	tdf.EncryptionInformation.IntegrityInformation.EncryptedSegmentSizeDefault = segmentSize + gcm.NonceSize() + 16 // 16 is for auth tag
 
-	tdf.EncryptionInformation.IntegrityInformation.RootSignature, err = tdf.EncryptionInformation.IntegrityInformation.GetRootSignature(key)
+	err = tdf.EncryptionInformation.IntegrityInformation.BuildRootSignature(key)
 	if err != nil {
 		return nil, err
 	}
@@ -305,33 +309,33 @@ func (client *Client) GetContent(file io.Reader) ([]byte, error) {
 	}
 
 	var plainText []byte
-	// Iterate over files and zip archive that are x.payload and decrypt
-	for _, file := range tdfZip.File {
-		// We don't need the manifest
-		if file.Name == manifestFileName {
-			continue
-		}
+	// Open Payload File
+	payload, err := tdfZip.Open("0.payload")
+	if err != nil {
+		return nil, err
+	}
+	defer payload.Close()
 
-		encryptedSegment, err := file.Open()
+	for _, segment := range tdf.EncryptionInformation.IntegrityInformation.Segments {
+		// Read the next chunk
+		chunk := make([]byte, segment.EncryptedSegmentSize)
+
+		_, err := payload.Read(chunk)
 		if err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
 			return nil, err
 		}
 
-		defer encryptedSegment.Close()
-		cipherText, err := io.ReadAll(encryptedSegment)
-		if err != nil {
-			return nil, err
-		}
-
-		// Extract nonce from cipher text
-		nonce, ct := cipherText[:gcm.NonceSize()], cipherText[gcm.NonceSize():]
-
-		pt, err := gcm.Open(nil, nonce, ct, nil)
+		nonce, cipherText := chunk[:gcm.NonceSize()], chunk[gcm.NonceSize():]
+		pt, err := gcm.Open(nil, nonce, cipherText, nil)
 		if err != nil {
 			return nil, errors.Join(errors.New("failed to decrypt segment"), err)
 		}
 
 		plainText = append(plainText, pt...)
+
 	}
 
 	return plainText, nil
