@@ -27,18 +27,14 @@ var contentCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(contentCmd)
 
-	homedir, err := os.UserHomeDir()
-	if err != nil {
-		log.Println(err)
-		os.Exit(1)
-	}
-	viper.AddConfigPath(fmt.Sprintf("%s/.opentdf", homedir))
-	viper.SetConfigName("config")
-	viper.SetConfigType("toml")
-	if err := viper.ReadInConfig(); err != nil {
-		fmt.Println("Can't read config:", err)
-		os.Exit(1)
-	}
+	// homedir, err := os.UserHomeDir()
+	// if err != nil {
+	// 	log.Println(err)
+	// 	os.Exit(1)
+	// }
+	// viper.AddConfigPath(fmt.Sprintf("%s/.opentdf", homedir))
+	// viper.SetConfigName("config")
+	// viper.SetConfigType("toml")
 
 	contentCmd.Flags().String("file", "", "TDF file to extract encrypted payload from")
 	contentCmd.Flags().String("output", "stdout", "Where to write the decrypted payload file or stdout")
@@ -51,6 +47,12 @@ func content(cmd *cobra.Command, args []string) {
 		opentdfCredentials OpenTDFCredentials
 		oauth2Client       *http.Client
 	)
+
+	if err := viper.ReadInConfig(); err != nil {
+		fmt.Println("Can't read config:", err)
+		os.Exit(1)
+	}
+
 	file, err := cmd.Flags().GetString("file")
 	if err != nil {
 		log.Fatal(err)

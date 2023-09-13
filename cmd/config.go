@@ -62,6 +62,10 @@ var configCmd = &cobra.Command{
 	Use:   "config",
 	Short: "Configure the TDF CLI",
 	Run: func(cmd *cobra.Command, args []string) {
+		if err := viper.ReadInConfig(); err != nil {
+			fmt.Println("Couldn't find config file, creating one...")
+		}
+
 		p := tea.NewProgram(initialModel())
 		m, err := p.Run()
 		if err != nil {
@@ -112,11 +116,11 @@ var configCmd = &cobra.Command{
 				os.Exit(1)
 			}
 		}
-		if err := viper.WriteConfig(); err != nil {
+		if err := viper.WriteConfigAs(fmt.Sprintf("%s/.opentdf/config.toml", homedir)); err != nil {
 			fmt.Printf("Alas, there's been an error: %v", err)
 			os.Exit(1)
 		}
-		fmt.Println("Config saved!")
+		fmt.Println("Config saved! ", fmt.Sprintf("%s/.opentdf/config.toml", homedir))
 	},
 }
 
@@ -127,10 +131,6 @@ func init() {
 	viper.SetConfigName("config")
 	viper.SetConfigType("toml")
 
-	if err := viper.ReadInConfig(); err != nil {
-		fmt.Println("Can't read config:", err)
-		os.Exit(1)
-	}
 }
 
 func initialModel() model {

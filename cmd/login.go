@@ -38,11 +38,6 @@ func init() {
 	viper.SetConfigName("config")
 	viper.SetConfigType("toml")
 
-	if err := viper.ReadInConfig(); err != nil {
-		fmt.Println("Can't read config:", err)
-		os.Exit(1)
-	}
-
 	loginCmd.Flags().String("client-id", "", "Client ID")
 	loginCmd.Flags().String("client-secret", "", "Client Secret")
 	loginCmd.Flags().String("oidc-endpoint", "", "OIDC Endpoint")
@@ -59,6 +54,11 @@ func login(cmd *cobra.Command, args []string) {
 		err                error
 		opentdfCredentials OpenTDFCredentials
 	)
+
+	if err := viper.ReadInConfig(); err != nil {
+		fmt.Println("Can't read config:", err)
+		os.Exit(1)
+	}
 
 	profile, err := cmd.Flags().GetString("profile")
 	if err != nil {
