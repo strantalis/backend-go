@@ -12,7 +12,9 @@ import (
 	"strings"
 
 	tdf3 "github.com/opentdf/backend-go/pkg/tdf3/client"
+	"github.com/pelletier/go-toml/v2"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
 // generateCmd represents the generate command
@@ -32,8 +34,11 @@ func init() {
 }
 
 func generateTDF(cmd *cobra.Command, args []string) {
-	var reader io.Reader
-	var output string
+	var (
+		opentdfCredentials OpenTDFCredentials
+		reader             io.Reader
+		output             string
+	)
 
 	file, err := cmd.Flags().GetString("file")
 	if err != nil {
@@ -87,7 +92,22 @@ func generateTDF(cmd *cobra.Command, args []string) {
 		reader = bytes.NewBufferString(text)
 	}
 
-	client, err := tdf3.NewTDFClient(tdf3.TDFClientOptions{KeyLength: &keySize, KasEndpoint: "https://platform.virtru.us/api/kas"})
+	homedir, err := os.UserHomeDir()
+	if err != nil {
+		log.Println(err)
+		os.Exit(1)
+	}
+	byteCredentials, err := os.ReadFile(fmt.Sprintf("%s/.opentdf/credentials.toml", homedir))
+	if err != nil {
+		log.Fatal(err)
+	}
+	if err = toml.Unmarshal(byteCredentials, &opentdfCredentials); err != nil {
+		log.Fatal(err)
+	}
+
+	kasEndpoint := viper.GetString(fmt.Sprintf("profiles.%s.kasendpoint", opentdfCredentials.Profile))
+
+	client, err := tdf3.NewTDFClient(tdf3.TDFClientOptions{KeyLength: &keySize, KasEndpoint: kasEndpoint})
 	if err != nil {
 		log.Fatal(err)
 	}
