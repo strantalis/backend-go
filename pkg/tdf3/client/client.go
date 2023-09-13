@@ -93,7 +93,7 @@ func clientDefaults(client *Client) {
 	}
 }
 
-func (client *Client) Create(plainText io.Reader) ([]byte, error) {
+func (client *Client) Create(plainText io.Reader, attributes []tdf3.Attribute) ([]byte, error) {
 	var (
 		tdf tdf3.TDF
 	)
@@ -205,7 +205,7 @@ func (client *Client) Create(plainText io.Reader) ([]byte, error) {
 	//TODO: Build Policy Object
 	policy := &tdf3.Policy{}
 	policy.UUID = uuid.New()
-	policy.Body.DataAttributes = make([]tdf3.Attribute, 0)
+	policy.Body.DataAttributes = attributes
 	policy.Body.Dissem = make([]string, 0)
 
 	jsonPolicy, err := json.Marshal(policy)
