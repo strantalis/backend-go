@@ -40,6 +40,11 @@ func generateTDF(cmd *cobra.Command, args []string) {
 		output             string
 	)
 
+	if err := viper.ReadInConfig(); err != nil {
+		fmt.Println("Can't read config:", err)
+		os.Exit(1)
+	}
+
 	file, err := cmd.Flags().GetString("file")
 	if err != nil {
 		log.Fatal(err)
