@@ -93,7 +93,7 @@ func clientDefaults(client *Client) {
 	}
 }
 
-func (client *Client) Create(plainText io.Reader, attributes []tdf3.Attribute) ([]byte, error) {
+func (client *Client) Create(plainText io.Reader, attributes []tdf3.Attribute, encrypionType string) ([]byte, error) {
 	var (
 		tdf tdf3.TDF
 	)
@@ -188,6 +188,15 @@ func (client *Client) Create(plainText io.Reader, attributes []tdf3.Attribute) (
 	}
 
 	//Key Access
+
+	switch tdf.EncryptionInformation.Type {
+	case "split":
+		
+	case "shamir":
+		fmt.Println("TODO: shamir")
+	default:
+		fmt.Println("Not a valid encryption type")
+
 	keyAccess := &tdf3.KeyAccess{}
 	keyAccess.Type = "wrapped"
 	keyAccess.URL = client.kas.Endpoint.String()
