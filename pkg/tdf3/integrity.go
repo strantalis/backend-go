@@ -30,17 +30,23 @@ type Signature struct {
 	Sig []byte `json:"sig"`
 }
 
-// What do we actually use to generate the root signature
-func (i *IntegrityInformation) GetRootSignature(key []byte) (Signature, error) {
-	var rootSignature Signature
+func (i *IntegrityInformation) BuildRootSignature(key []byte) error {
+	sig, err := getRootSignature(i.Segments, key)
+	if err != nil {
+		return errors.New("error building root signature")
+	}
+	i.RootSignature = *sig
+	return nil
+}
+func getRootSignature(segments []Segment, key []byte) (*Signature, error) {
+	var rootSignature = new(Signature)
 	rootSignature.Alg = "HS256"
 
 	var toSign []byte
-	for _, segment := range i.Segments {
+	for _, segment := range segments {
 		// Combine all segments to be signed
 		toSign = append(toSign, segment.Hash...)
 	}
-
 	rootSignature.Sig = tdfCrypto.Sign(toSign, key)
 
 	return rootSignature, nil
@@ -49,14 +55,17 @@ func (i *IntegrityInformation) GetRootSignature(key []byte) (Signature, error) {
 func (s *Segment) Build(content []byte, key []byte) {
 	s.SegmentSize = segmentSize
 	s.EncryptedSegmentSize = len(content)
-	s.Hash = tdfCrypto.Sign(content, key)
+	hexBuf := make([]byte, hex.EncodedLen(len(content[len(content)-16:])))
+	hex.Encode(hexBuf, content[len(content)-16:])
+	s.Hash = hexBuf
 }
 
 func (i *IntegrityInformation) Validate(key []byte) error {
-	sig, err := i.GetRootSignature(key)
+	sig, err := getRootSignature(i.Segments, key)
 	if err != nil {
 		return errors.Join(errors.New("error validating root signature"), err)
 	}
+
 	if !bytes.Equal(sig.Sig, i.RootSignature.Sig) {
 		return fmt.Errorf("invalid root signature %s != %s", hex.EncodeToString(sig.Sig), hex.EncodeToString(i.RootSignature.Sig))
 	}
