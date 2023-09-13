@@ -11,6 +11,7 @@ import (
 
 type ClientCredentials struct {
 	Config    *clientcredentials.Config
+	Tokens    *oauth2.Token
 	PublicKey []byte
 }
 

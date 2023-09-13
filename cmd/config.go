@@ -20,7 +20,7 @@ import (
 
 const (
 	profileName = iota
-	oidcEndpoint
+	oidcDiscoveryEndpoint
 	kasEndpoint
 	clientID
 	clientSecret
@@ -51,10 +51,10 @@ type Config struct {
 }
 
 type OpenTDFConfig struct {
-	KasEndpoint  string `toml:"kasendpoint"`
-	OidcEndpoint string `toml:"oidcendpoint"`
-	ClientID     string `toml:"clientid"`
-	ClientSecret string `toml:"clientsecret,omitempty"`
+	KasEndpoint           string `toml:"kasendpoint"`
+	OidcDiscoveryEndpoint string `toml:"oidcdiscoveryendpoint"`
+	ClientID              string `toml:"clientid"`
+	ClientSecret          string `toml:"clientsecret,omitempty"`
 }
 
 // configCmd represents the config command
@@ -75,9 +75,9 @@ var configCmd = &cobra.Command{
 			os.Exit(1)
 		}
 		otdfConfig := OpenTDFConfig{
-			OidcEndpoint: m.(model).inputs[oidcEndpoint].Value(),
-			ClientID:     m.(model).inputs[clientID].Value(),
-			KasEndpoint:  m.(model).inputs[kasEndpoint].Value(),
+			OidcDiscoveryEndpoint: m.(model).inputs[oidcDiscoveryEndpoint].Value(),
+			ClientID:              m.(model).inputs[clientID].Value(),
+			KasEndpoint:           m.(model).inputs[kasEndpoint].Value(),
 		}
 		if m.(model).inputs[clientSecret].Value() != "" {
 			otdfConfig.ClientSecret = m.(model).inputs[clientSecret].Value()
@@ -140,10 +140,10 @@ func initialModel() model {
 	inputs[profileName].Focus()
 	inputs[profileName].CharLimit = 156
 	inputs[profileName].Width = 20
-	inputs[oidcEndpoint] = textinput.New()
-	inputs[oidcEndpoint].Placeholder = "OIDC Endpoint"
-	inputs[oidcEndpoint].CharLimit = 156
-	inputs[oidcEndpoint].Width = 100
+	inputs[oidcDiscoveryEndpoint] = textinput.New()
+	inputs[oidcDiscoveryEndpoint].Placeholder = "OIDC Endpoint"
+	inputs[oidcDiscoveryEndpoint].CharLimit = 156
+	inputs[oidcDiscoveryEndpoint].Width = 100
 	inputs[kasEndpoint] = textinput.New()
 	inputs[kasEndpoint].Placeholder = "Kas Endpoint"
 	inputs[kasEndpoint].CharLimit = 156
@@ -217,7 +217,7 @@ func (m model) View() string {
 		inputStyle.Width(24).Render("Profile Name"),
 		m.inputs[profileName].View(),
 		inputStyle.Width(24).Render("OIDC Endpoint"),
-		m.inputs[oidcEndpoint].View(),
+		m.inputs[oidcDiscoveryEndpoint].View(),
 		inputStyle.Width(24).Render("KAS Endpoint"),
 		m.inputs[kasEndpoint].View(),
 		inputStyle.Width(24).Render("Client ID"),

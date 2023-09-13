@@ -22,6 +22,7 @@ import (
 
 type AuthorizaionCodePKCE struct {
 	Oauth2Config *oauth2.Config
+	Tokens       *oauth2.Token
 	PublicKey    []byte
 }
 
@@ -85,6 +86,7 @@ func (acp *AuthorizaionCodePKCE) Login() (*oauth2.Token, error) {
 		if err != nil {
 			log.Fatalf("Error getting token: %v\n", err)
 		}
+		defer resp.Body.Close()
 		err = json.NewDecoder(resp.Body).Decode(&tokens)
 		if err != nil {
 			log.Fatalf("Error decoding token: %v\n", err)
@@ -120,7 +122,16 @@ func (acp *AuthorizaionCodePKCE) Login() (*oauth2.Token, error) {
 		log.Printf("Failed to shutdown HTTP server gracefully: %v", err)
 		return nil, err
 	}
+	acp.Tokens = tokens
 	return tokens, nil
+}
+
+func (acp *AuthorizaionCodePKCE) Client() (*http.Client, error) {
+	tokens, err := acp.Oauth2Config.TokenSource(context.Background(), acp.Tokens).Token()
+	if err != nil {
+		return nil, err
+	}
+	return acp.Oauth2Config.Client(context.Background(), tokens), nil
 }
 
 func openBrowser(url string) error {
