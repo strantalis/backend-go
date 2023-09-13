@@ -277,6 +277,7 @@ func (client *Client) GetContent(file io.Reader, writer io.Writer) error {
 		return err
 	}
 
+	var key []byte
 	switch tdf.EncryptionInformation.Type {
 	case "split":
 		for _, ka := range tdf.EncryptionInformation.KeyAccess {
@@ -300,8 +301,10 @@ func (client *Client) GetContent(file io.Reader, writer io.Writer) error {
 				if err != nil {
 					return err
 				}
-				
-				rewraps = append(rewraps, ka)
+				if key > 0 {
+					//XOR the keys together
+					key = key ^ unWrappedKey
+				}
 			}
 		}
 	case "shamir":
