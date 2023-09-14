@@ -117,7 +117,7 @@ func generateTDF(cmd *cobra.Command, args []string) {
 		log.Fatal(err)
 	}
 
-	kasEndpoint := viper.GetString(fmt.Sprintf("profiles.%s.kasendpoint", opentdfCredentials.Profile))
+	kasEndpoint := viper.GetStringSlice(fmt.Sprintf("profiles.%s.kasendpoint", opentdfCredentials.Profile))
 
 	client, err := client.NewTDFClient(client.TDFClientOptions{KeyLength: &keySize, KasEndpoint: kasEndpoint})
 	if err != nil {
@@ -134,7 +134,7 @@ func generateTDF(cmd *cobra.Command, args []string) {
 	}
 
 	var out []byte
-	if out, err = client.Create(reader, parsedAttributes); err != nil {
+	if out, err = client.Create(reader, parsedAttributes, ""); err != nil {
 		log.Fatal(err)
 	}
 

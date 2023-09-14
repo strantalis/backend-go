@@ -13,6 +13,7 @@ import (
 	"net/url"
 
 	"github.com/google/uuid"
+	"github.com/opentdf/backend-go/internal/crypto"
 	tdfCrypto "github.com/opentdf/backend-go/internal/crypto"
 	"github.com/opentdf/backend-go/internal/kas"
 	"github.com/opentdf/backend-go/pkg/tdf3"
@@ -32,7 +33,7 @@ var (
 
 type Client struct {
 	keyLength   int
-	kas         *kas.Client
+	kas         []*kas.Client
 	accessToken string
 	PrivKey     []byte
 	PubKey      []byte
@@ -40,7 +41,7 @@ type Client struct {
 
 type TDFClientOptions struct {
 	KeyLength   *int
-	KasEndpoint string
+	KasEndpoint []string
 	AccessToken string
 	PrivKey     []byte
 	PubKey      []byte
@@ -59,26 +60,30 @@ func NewTDFClient(ops ...TDFClientOptions) (*Client, error) {
 		if ops[0].KeyLength != nil {
 			client.keyLength = *ops[0].KeyLength
 		}
-		var (
-			kasUrl *url.URL
-			err    error
-		)
-		if ops[0].KasEndpoint != "" {
-			kasUrl, err = url.Parse(ops[0].KasEndpoint)
+
+		for _, endpoint := range ops[0].KasEndpoint {
+			var (
+				kasUrl *url.URL
+				err    error
+			)
+
+			kasUrl, err = url.Parse(endpoint)
 			if err != nil {
 				return nil, err
 			}
-		}
 
-		if ops[0].HttpClient == nil {
-			ops[0].HttpClient = http.DefaultClient
-		}
-		client.kas, err = kas.NewClient(kas.KasClientOptions{
-			Endpoint:   kasUrl,
-			HttpClient: ops[0].HttpClient,
-		})
-		if err != nil {
-			return nil, err
+			if ops[0].HttpClient == nil {
+				ops[0].HttpClient = http.DefaultClient
+			}
+
+			kc, err := kas.NewClient(kas.KasClientOptions{
+				Endpoint:   kasUrl,
+				HttpClient: ops[0].HttpClient,
+			})
+			if err != nil {
+				return nil, err
+			}
+			client.kas = append(client.kas, kc)
 		}
 	}
 
@@ -94,18 +99,21 @@ func clientDefaults(client *Client) {
 }
 
 func (client *Client) Create(plainText io.Reader, attributes []tdf3.Attribute, encrypionType string) ([]byte, error) {
-	var (
-		tdf tdf3.TDF
-	)
+	keyLength := client.keyLength / 8
 
+	var (
+		tdf        tdf3.TDF
+		payloadKey = make([]byte, keyLength)
+	)
+	encrypionType = "split"
 	// Generate new payload key
 	// Divide by 8 to get bytes
-	key, err := tdfCrypto.GenerateKey(client.keyLength / 8)
+	payloadKey, err := tdfCrypto.GenerateKey(keyLength)
 	if err != nil {
 		return nil, err
 	}
 
-	gcm, err := tdfCrypto.NewGCM(key)
+	gcm, err := tdfCrypto.NewGCM(payloadKey)
 	if err != nil {
 		return nil, err
 	}
@@ -167,7 +175,7 @@ func (client *Client) Create(plainText io.Reader, attributes []tdf3.Attribute, e
 		// Build new segment
 		segment := tdf3.Segment{}
 
-		segment.Build(cipherText, key)
+		segment.Build(cipherText, payloadKey)
 		segments = append(segments, segment)
 
 		chunkWriter.Write(cipherText)
@@ -182,34 +190,10 @@ func (client *Client) Create(plainText io.Reader, attributes []tdf3.Attribute, e
 	tdf.EncryptionInformation.IntegrityInformation.SegmentSizeDefault = segmentSize
 	tdf.EncryptionInformation.IntegrityInformation.EncryptedSegmentSizeDefault = segmentSize + gcm.NonceSize() + 16 // 16 is for auth tag
 
-	err = tdf.EncryptionInformation.IntegrityInformation.BuildRootSignature(key)
+	err = tdf.EncryptionInformation.IntegrityInformation.BuildRootSignature(payloadKey)
 	if err != nil {
 		return nil, err
 	}
-
-	//Key Access
-
-	switch tdf.EncryptionInformation.Type {
-	case "split":
-		
-	case "shamir":
-		fmt.Println("TODO: shamir")
-	default:
-		fmt.Println("Not a valid encryption type")
-
-	keyAccess := &tdf3.KeyAccess{}
-	keyAccess.Type = "wrapped"
-	keyAccess.URL = client.kas.Endpoint.String()
-	keyAccess.Protocol = "kas"
-
-	// Rewrap our data key with the kas public key
-	keyAccess.WrappedKey, err = client.kas.LocalRewrap(key)
-	if err != nil {
-		return nil, err
-	}
-
-	// How do we actually use multiple key access objects?
-	tdf.EncryptionInformation.KeyAccess = append(tdf.EncryptionInformation.KeyAccess, *keyAccess)
 
 	//TODO: Build Policy Object
 	policy := &tdf3.Policy{}
@@ -225,7 +209,32 @@ func (client *Client) Create(plainText io.Reader, attributes []tdf3.Attribute, e
 	tdf.EncryptionInformation.Policy = jsonPolicy
 	b64Policy := base64.StdEncoding.EncodeToString(jsonPolicy)
 	// How does actually get validated by the kas?
-	tdf.EncryptionInformation.KeyAccess[0].PolicyBinding = tdfCrypto.Sign([]byte(b64Policy), key)
+	// How do we actually use multiple key access objects?
+	//Key Access
+	switch encrypionType {
+	case "split":
+		splits := crypto.KeySplit(payloadKey, len(client.kas))
+		for i, kas := range client.kas {
+
+			keyAccess := &tdf3.KeyAccess{}
+			keyAccess.Type = "wrapped"
+			keyAccess.URL = kas.Endpoint.String()
+			keyAccess.Protocol = "kas"
+
+			keyAccess.WrappedKey, err = kas.LocalRewrap(splits[i])
+			if err != nil {
+				return nil, err
+			}
+			keyAccess.PolicyBinding = tdfCrypto.Sign([]byte(b64Policy), splits[i])
+			tdf.EncryptionInformation.KeyAccess = append(tdf.EncryptionInformation.KeyAccess, *keyAccess)
+
+		}
+	case "shamir":
+		fmt.Println("TODO: shamir")
+	default:
+		fmt.Println("Not a valid encryption type")
+
+	}
 
 	// We only split type for now. Not sure what it actually means
 	tdf.EncryptionInformation.Type = "split"
@@ -286,49 +295,47 @@ func (client *Client) GetContent(file io.Reader, writer io.Writer) error {
 		return err
 	}
 
-	var key []byte
+	var payloadKey []byte
 	switch tdf.EncryptionInformation.Type {
 	case "split":
-		for _, ka := range tdf.EncryptionInformation.KeyAccess {
+		var splits [][]byte
+		for k, ka := range tdf.EncryptionInformation.KeyAccess {
 			// Need to figure out how to handle other types
-			if ka.Type == "rewrap" {
+			if ka.Type == "wrapped" {
 				var (
 					rewrapRequest = new(kas.RequestBody)
-					rewrapResponse []*kas.RewrapResponse
 				)
 				rewrapRequest.KeyAccess = ka
 				rewrapRequest.ClientPublicKey = string(client.PubKey)
 				rewrapRequest.Policy = tdf.EncryptionInformation.Policy
-				resp, err := client.kas.RemoteRewrap(rewrapRequest, privateKey)
+				rewrapResponse, err := client.kas[k].RemoteRewrap(rewrapRequest, privateKey)
 				// Get Wrapped Key
 				if err != nil {
 					return err
 				}
 
 				// Unwrap our key from KAS
-				unWrappedKey, err := tdfCrypto.DecryptOAEP(privateKey.(*rsa.PrivateKey), rewrapResponse.EntityWrappedKey)
+				split, err := tdfCrypto.DecryptOAEP(privateKey.(*rsa.PrivateKey), rewrapResponse.EntityWrappedKey)
 				if err != nil {
 					return err
 				}
-				if key > 0 {
-					//XOR the keys together
-					key = key ^ unWrappedKey
-				}
+				splits = append(splits, split)
 			}
 		}
+		payloadKey = crypto.KeyMerge(splits)
 	case "shamir":
 		fmt.Println("TODO: shamir")
 	default:
 		fmt.Println("Not a valid encryption type")
 
-	
+	}
 
 	// Before we try to decrypt we need to valid the integrity of the rootSignature
-	if err := tdf.EncryptionInformation.IntegrityInformation.Validate(unWrappedKey); err != nil {
+	if err := tdf.EncryptionInformation.IntegrityInformation.Validate(payloadKey); err != nil {
 		return err
 	}
 
-	gcm, err := tdfCrypto.NewGCM(unWrappedKey)
+	gcm, err := tdfCrypto.NewGCM(payloadKey)
 	if err != nil {
 		return err
 	}

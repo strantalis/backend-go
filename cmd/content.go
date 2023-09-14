@@ -95,7 +95,7 @@ func content(cmd *cobra.Command, args []string) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	kasEndpoint := viper.GetString(fmt.Sprintf("profiles.%s.kasendpoint", opentdfCredentials.Profile))
+	kasEndpoint := viper.GetStringSlice(fmt.Sprintf("profiles.%s.kasendpoint", opentdfCredentials.Profile))
 
 	client, err := tdf3.NewTDFClient(tdf3.TDFClientOptions{
 		KasEndpoint: kasEndpoint,
