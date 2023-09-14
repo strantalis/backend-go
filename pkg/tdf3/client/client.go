@@ -116,13 +116,14 @@ func clientDefaults(client *Client) {
 	}
 }
 
-func (client *Client) Create(plainText io.Reader, attributes []tdf3.Attribute) ([]byte, error) {
+func (client *Client) Create(plainText io.Reader, attributes []tdf3.Attribute, encryptedMetaData []byte) ([]byte, error) {
 	// Divide by 8 to get bytes for key length
 	keyLength := client.keyLength / 8
 
 	var (
-		tdf        tdf3.TDF
-		payloadKey = make([]byte, keyLength)
+		tdf                          tdf3.TDF
+		payloadKey                   = make([]byte, keyLength)
+		encryptedMetatDataCipherText []byte
 	)
 
 	// Generate Payload Key
@@ -134,6 +135,18 @@ func (client *Client) Create(plainText io.Reader, attributes []tdf3.Attribute) (
 	gcm, err := tdfCrypto.NewGCM(payloadKey)
 	if err != nil {
 		return nil, err
+	}
+
+	// Encrypted Meta Data
+	if len(encryptedMetaData) != 0 {
+		// Generate nonce or what some people call the iv
+		nonce, err := tdfCrypto.GenerateNonce(gcm.NonceSize())
+		if err != nil {
+			return nil, err
+		}
+
+		// Encrypt segment
+		encryptedMetatDataCipherText = gcm.Seal(nonce, nonce, encryptedMetaData, nil)
 	}
 
 	// Describe Payload
@@ -244,6 +257,7 @@ func (client *Client) Create(plainText io.Reader, attributes []tdf3.Attribute) (
 				return nil, err
 			}
 			keyAccess.PolicyBinding = tdfCrypto.Sign([]byte(b64Policy), splits[i])
+			keyAccess.EncryptedMetadata = encryptedMetatDataCipherText
 			tdf.EncryptionInformation.KeyAccess = append(tdf.EncryptionInformation.KeyAccess, *keyAccess)
 
 		}
@@ -265,6 +279,7 @@ func (client *Client) Create(plainText io.Reader, attributes []tdf3.Attribute) (
 				return nil, err
 			}
 			keyAccess.PolicyBinding = tdfCrypto.Sign([]byte(b64Policy), shares[i])
+			keyAccess.EncryptedMetadata = encryptedMetatDataCipherText
 			tdf.EncryptionInformation.KeyAccess = append(tdf.EncryptionInformation.KeyAccess, *keyAccess)
 
 		}
@@ -325,7 +340,6 @@ func (client *Client) GetContent(file io.Reader, writer io.Writer) error {
 	*/
 
 	// Build kas rewrap request object
-	// keyAccessObjs := tdf.EncryptionInformation.Key()
 
 	privateKey, err := tdfCrypto.ParsePrivateKey(client.PrivKey)
 	if err != nil {
@@ -477,4 +491,102 @@ func (client *Client) GetManifest(file io.Reader) (tdf3.TDF, error) {
 	}
 
 	return tdf, nil
+}
+
+// this is a hack for hackathon
+func (client *Client) GetEncryptedMetaData(file io.Reader) ([]byte, error) {
+
+	// We need to work with the manifest from the zip archive
+	tdf, err := client.GetManifest(file)
+	if err != nil {
+		return nil, err
+	}
+
+	privateKey, err := tdfCrypto.ParsePrivateKey(client.PrivKey)
+	if err != nil {
+		return nil, err
+	}
+
+	var payloadKey []byte
+	switch tdf.EncryptionInformation.Type {
+	case "split":
+		var splits [][]byte
+		for k, kao := range tdf.EncryptionInformation.KeyAccess {
+			// Need to figure out how to handle other types
+			if kao.Type == "wrapped" {
+				var (
+					rewrapRequest = new(kas.RequestBody)
+				)
+				rewrapRequest.KeyAccess = kao
+				rewrapRequest.ClientPublicKey = string(client.PubKey)
+				rewrapRequest.Policy = tdf.EncryptionInformation.Policy
+				rewrapResponse, err := client.kas[k].RemoteRewrap(rewrapRequest, privateKey)
+				// Get Wrapped Key
+				if err != nil {
+					return nil, err
+				}
+
+				// Unwrap our key from KAS
+				split, err := tdfCrypto.DecryptOAEP(privateKey.(*rsa.PrivateKey), rewrapResponse.EntityWrappedKey)
+				if err != nil {
+					return nil, err
+				}
+				splits = append(splits, split)
+			}
+		}
+		payloadKey = crypto.KeyMerge(splits)
+	case "shamir":
+		var shares [][]byte
+		for k, kao := range tdf.EncryptionInformation.KeyAccess {
+
+			var (
+				rewrapRequest = new(kas.RequestBody)
+			)
+			rewrapRequest.KeyAccess = kao
+			rewrapRequest.ClientPublicKey = string(client.PubKey)
+			rewrapRequest.Policy = tdf.EncryptionInformation.Policy
+			rewrapResponse, err := client.kas[k].RemoteRewrap(rewrapRequest, privateKey)
+			// Get Wrapped Key
+			if err != nil {
+				return nil, err
+			}
+
+			// Unwrap our key from KAS
+			share, err := tdfCrypto.DecryptOAEP(privateKey.(*rsa.PrivateKey), rewrapResponse.EntityWrappedKey)
+			if err != nil {
+				return nil, err
+			}
+			shares = append(shares, share)
+
+		}
+		payloadKey, err = shamir.Combine(shares)
+		if err != nil {
+			return nil, errors.Join(errors.New("failed to combine shmair shares for payloadkey"), err)
+		}
+	default:
+		fmt.Println("Not a valid encryption type")
+	}
+
+	// Before we try to decrypt we need to valid the integrity of the rootSignature
+	if err := tdf.EncryptionInformation.IntegrityInformation.Validate(payloadKey); err != nil {
+		return nil, err
+	}
+
+	gcm, err := tdfCrypto.NewGCM(payloadKey)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, kao := range tdf.EncryptionInformation.KeyAccess {
+		if kao.EncryptedMetadata != nil {
+			nonce, cipherText := kao.EncryptedMetadata[:gcm.NonceSize()], kao.EncryptedMetadata[gcm.NonceSize():]
+			pt, err := gcm.Open(nil, nonce, cipherText, nil)
+			if err != nil {
+				return nil, errors.Join(errors.New("failed to decrypt encrypted metadata"), err)
+			}
+			return pt, nil
+		}
+	}
+
+	return nil, errors.New("no encrypted metadata found")
 }

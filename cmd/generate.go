@@ -80,10 +80,10 @@ func generateTDF(cmd *cobra.Command, args []string) {
 		log.Fatal(err)
 	}
 
-	// encryptedMetatData, err := cmd.Flags().GetString("encryptedMetatData")
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
+	encryptedMetatData, err := cmd.Flags().GetString("encryptedMetatData")
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	if !strings.HasPrefix(o, "file://") && !strings.HasPrefix(o, "https://") {
 		log.Fatal("Output must be either file:// or https://")
@@ -152,7 +152,7 @@ func generateTDF(cmd *cobra.Command, args []string) {
 
 	var out []byte
 	start := time.Now()
-	if out, err = client.Create(reader, parsedAttributes); err != nil {
+	if out, err = client.Create(reader, parsedAttributes, []byte(encryptedMetatData)); err != nil {
 		log.Fatal(err)
 	}
 	duration := time.Since(start)
