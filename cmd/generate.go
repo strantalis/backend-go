@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/opentdf/backend-go/pkg/tdf3"
 	"github.com/opentdf/backend-go/pkg/tdf3/client"
@@ -33,6 +34,8 @@ func init() {
 	generateCmd.Flags().String("output", "file://test.tdf", "Output file")
 	generateCmd.Flags().Int("keysize", 256, "Key size")
 	generateCmd.Flags().StringArray("attribute", []string{}, "Attribute to apply to the TDF")
+	generateCmd.Flags().String("keySplitType", "split", "Key split type can be split or shamir")
+	generateCmd.Flags().String("encryptedMetatData", "", "Encrypted metadata")
 }
 
 func generateTDF(cmd *cobra.Command, args []string) {
@@ -71,6 +74,16 @@ func generateTDF(cmd *cobra.Command, args []string) {
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	keySplitType, err := cmd.Flags().GetString("keySplitType")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// encryptedMetatData, err := cmd.Flags().GetString("encryptedMetatData")
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
 
 	if !strings.HasPrefix(o, "file://") && !strings.HasPrefix(o, "https://") {
 		log.Fatal("Output must be either file:// or https://")
@@ -119,7 +132,11 @@ func generateTDF(cmd *cobra.Command, args []string) {
 
 	kasEndpoint := viper.GetStringSlice(fmt.Sprintf("profiles.%s.kasendpoint", opentdfCredentials.Profile))
 
-	client, err := client.NewTDFClient(client.TDFClientOptions{KeyLength: &keySize, KasEndpoint: kasEndpoint})
+	client, err := client.NewTDFClient(client.TDFClientOptions{
+		KeyLength:      &keySize,
+		KasEndpoint:    kasEndpoint,
+		EncryptionType: keySplitType,
+	})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -134,10 +151,12 @@ func generateTDF(cmd *cobra.Command, args []string) {
 	}
 
 	var out []byte
-	if out, err = client.Create(reader, parsedAttributes, ""); err != nil {
+	start := time.Now()
+	if out, err = client.Create(reader, parsedAttributes); err != nil {
 		log.Fatal(err)
 	}
-
+	duration := time.Since(start)
+	fmt.Printf("TDF generated in %s\n", duration)
 	outFile, err := os.Create(output)
 	if err != nil {
 		log.Fatal(err)

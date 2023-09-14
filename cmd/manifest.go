@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
 
 	tdf3 "github.com/opentdf/backend-go/pkg/tdf3/client"
 	"github.com/spf13/cobra"
@@ -50,13 +51,18 @@ func manifest(cmd *cobra.Command, args []string) {
 	if err != nil {
 		log.Fatal(err)
 	}
+	start := time.Now()
 	manifest, err := client.GetManifest(tdf)
 	if err != nil {
 		log.Fatal(err)
 	}
+	duration := time.Since(start)
+	fmt.Printf("TDF Manifest in %s\n", duration)
+
 	jsonTDF, err := json.MarshalIndent(&manifest, "", "	")
 	if err != nil {
 		log.Fatal(err)
 	}
+
 	fmt.Println(string(jsonTDF))
 }

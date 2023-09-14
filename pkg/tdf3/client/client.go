@@ -2,6 +2,7 @@ package client
 
 import (
 	"archive/zip"
+	"bufio"
 	"bytes"
 	"crypto/rsa"
 	"encoding/base64"
@@ -13,6 +14,7 @@ import (
 	"net/url"
 
 	"github.com/google/uuid"
+	"github.com/hashicorp/vault/shamir"
 	"github.com/opentdf/backend-go/internal/crypto"
 	tdfCrypto "github.com/opentdf/backend-go/internal/crypto"
 	"github.com/opentdf/backend-go/internal/kas"
@@ -32,20 +34,24 @@ var (
 )
 
 type Client struct {
-	keyLength   int
-	kas         []*kas.Client
-	accessToken string
-	PrivKey     []byte
-	PubKey      []byte
+	keyLength       int
+	kas             []*kas.Client
+	accessToken     string
+	PrivKey         []byte
+	PubKey          []byte
+	encryptionType  string
+	shamirThreshold int
 }
 
 type TDFClientOptions struct {
-	KeyLength   *int
-	KasEndpoint []string
-	AccessToken string
-	PrivKey     []byte
-	PubKey      []byte
-	HttpClient  *http.Client
+	KeyLength       *int
+	KasEndpoint     []string
+	AccessToken     string
+	PrivKey         []byte
+	PubKey          []byte
+	HttpClient      *http.Client
+	EncryptionType  string
+	ShamirThreshold int
 }
 
 func NewTDFClient(ops ...TDFClientOptions) (*Client, error) {
@@ -59,6 +65,10 @@ func NewTDFClient(ops ...TDFClientOptions) (*Client, error) {
 		}
 		if ops[0].KeyLength != nil {
 			client.keyLength = *ops[0].KeyLength
+		}
+
+		if ops[0].EncryptionType != "" {
+			client.encryptionType = ops[0].EncryptionType
 		}
 
 		for _, endpoint := range ops[0].KasEndpoint {
@@ -96,18 +106,26 @@ func clientDefaults(client *Client) {
 	if client.keyLength == 0 {
 		client.keyLength = 256
 	}
+
+	if client.encryptionType == "" {
+		client.encryptionType = "split"
+	}
+
+	if client.shamirThreshold == 0 {
+		client.shamirThreshold = 2
+	}
 }
 
-func (client *Client) Create(plainText io.Reader, attributes []tdf3.Attribute, encrypionType string) ([]byte, error) {
+func (client *Client) Create(plainText io.Reader, attributes []tdf3.Attribute) ([]byte, error) {
+	// Divide by 8 to get bytes for key length
 	keyLength := client.keyLength / 8
 
 	var (
 		tdf        tdf3.TDF
 		payloadKey = make([]byte, keyLength)
 	)
-	encrypionType = "split"
-	// Generate new payload key
-	// Divide by 8 to get bytes
+
+	// Generate Payload Key
 	payloadKey, err := tdfCrypto.GenerateKey(keyLength)
 	if err != nil {
 		return nil, err
@@ -149,9 +167,11 @@ func (client *Client) Create(plainText io.Reader, attributes []tdf3.Attribute, e
 		return nil, err
 	}
 
+	// Wrap io.Reader in bufio.Reader
+	bufReader := bufio.NewReader(plainText)
 	// Chunk the payload and encrypt into segments
 	for {
-		n, err := plainText.Read(buf)
+		n, err := bufReader.Read(buf)
 		if err != nil && err != io.EOF {
 			return nil, err
 		}
@@ -208,10 +228,8 @@ func (client *Client) Create(plainText io.Reader, attributes []tdf3.Attribute, e
 
 	tdf.EncryptionInformation.Policy = jsonPolicy
 	b64Policy := base64.StdEncoding.EncodeToString(jsonPolicy)
-	// How does actually get validated by the kas?
-	// How do we actually use multiple key access objects?
-	//Key Access
-	switch encrypionType {
+	//Key Access Object Creation
+	switch client.encryptionType {
 	case "split":
 		splits := crypto.KeySplit(payloadKey, len(client.kas))
 		for i, kas := range client.kas {
@@ -230,14 +248,33 @@ func (client *Client) Create(plainText io.Reader, attributes []tdf3.Attribute, e
 
 		}
 	case "shamir":
-		fmt.Println("TODO: shamir")
+		// Need to do some checks around number of clients and thresholds
+		shares, err := shamir.Split(payloadKey, len(client.kas), client.shamirThreshold)
+		if err != nil {
+			return nil, errors.Join(errors.New("failed to generate shmair shares from payloadkey"), err)
+		}
+		for i, kas := range client.kas {
+
+			keyAccess := &tdf3.KeyAccess{}
+			keyAccess.Type = "wrapped"
+			keyAccess.URL = kas.Endpoint.String()
+			keyAccess.Protocol = "kas"
+
+			keyAccess.WrappedKey, err = kas.LocalRewrap(shares[i])
+			if err != nil {
+				return nil, err
+			}
+			keyAccess.PolicyBinding = tdfCrypto.Sign([]byte(b64Policy), shares[i])
+			tdf.EncryptionInformation.KeyAccess = append(tdf.EncryptionInformation.KeyAccess, *keyAccess)
+
+		}
 	default:
-		fmt.Println("Not a valid encryption type")
+		return nil, fmt.Errorf("Not a valid encryption type")
 
 	}
 
 	// We only split type for now. Not sure what it actually means
-	tdf.EncryptionInformation.Type = "split"
+	tdf.EncryptionInformation.Type = client.encryptionType
 
 	manifestHeader := &zip.FileHeader{
 		Name:   manifestFileName,
@@ -299,13 +336,13 @@ func (client *Client) GetContent(file io.Reader, writer io.Writer) error {
 	switch tdf.EncryptionInformation.Type {
 	case "split":
 		var splits [][]byte
-		for k, ka := range tdf.EncryptionInformation.KeyAccess {
+		for k, kao := range tdf.EncryptionInformation.KeyAccess {
 			// Need to figure out how to handle other types
-			if ka.Type == "wrapped" {
+			if kao.Type == "wrapped" {
 				var (
 					rewrapRequest = new(kas.RequestBody)
 				)
-				rewrapRequest.KeyAccess = ka
+				rewrapRequest.KeyAccess = kao
 				rewrapRequest.ClientPublicKey = string(client.PubKey)
 				rewrapRequest.Policy = tdf.EncryptionInformation.Policy
 				rewrapResponse, err := client.kas[k].RemoteRewrap(rewrapRequest, privateKey)
@@ -324,10 +361,35 @@ func (client *Client) GetContent(file io.Reader, writer io.Writer) error {
 		}
 		payloadKey = crypto.KeyMerge(splits)
 	case "shamir":
-		fmt.Println("TODO: shamir")
+		var shares [][]byte
+		for k, kao := range tdf.EncryptionInformation.KeyAccess {
+
+			var (
+				rewrapRequest = new(kas.RequestBody)
+			)
+			rewrapRequest.KeyAccess = kao
+			rewrapRequest.ClientPublicKey = string(client.PubKey)
+			rewrapRequest.Policy = tdf.EncryptionInformation.Policy
+			rewrapResponse, err := client.kas[k].RemoteRewrap(rewrapRequest, privateKey)
+			// Get Wrapped Key
+			if err != nil {
+				return err
+			}
+
+			// Unwrap our key from KAS
+			share, err := tdfCrypto.DecryptOAEP(privateKey.(*rsa.PrivateKey), rewrapResponse.EntityWrappedKey)
+			if err != nil {
+				return err
+			}
+			shares = append(shares, share)
+
+		}
+		payloadKey, err = shamir.Combine(shares)
+		if err != nil {
+			return errors.Join(errors.New("failed to combine shmair shares for payloadkey"), err)
+		}
 	default:
 		fmt.Println("Not a valid encryption type")
-
 	}
 
 	// Before we try to decrypt we need to valid the integrity of the rootSignature

@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/opentdf/backend-go/pkg/oidc"
 	tdf3 "github.com/opentdf/backend-go/pkg/tdf3/client"
@@ -123,8 +124,11 @@ func content(cmd *cobra.Command, args []string) {
 		}
 	}
 	defer w.(*os.File).Close()
+	start := time.Now()
 	err = client.GetContent(tdf, w)
 	if err != nil {
 		log.Fatal(err)
 	}
+	duration := time.Since(start)
+	fmt.Printf("Decrypted TDF Content in %s\n", duration)
 }
