@@ -5,7 +5,6 @@ package cmd
 
 import (
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -18,32 +17,21 @@ import (
 	"github.com/spf13/viper"
 )
 
-// contentCmd represents the content command
-var contentCmd = &cobra.Command{
-	Use:   "content",
-	Short: "Get the content of a TDF",
-	Run:   content,
+// metadataCmd represents the metadata command
+var metadataCmd = &cobra.Command{
+	Use:   "metadata",
+	Short: "Get Encrypted Metadata",
+	Run:   metadata,
 }
 
 func init() {
-	rootCmd.AddCommand(contentCmd)
+	rootCmd.AddCommand(metadataCmd)
 
-	// homedir, err := os.UserHomeDir()
-	// if err != nil {
-	// 	log.Println(err)
-	// 	os.Exit(1)
-	// }
-	// viper.AddConfigPath(fmt.Sprintf("%s/.opentdf", homedir))
-	// viper.SetConfigName("config")
-	// viper.SetConfigType("toml")
-
-	contentCmd.Flags().String("file", "", "TDF file to extract encrypted payload from")
-	contentCmd.Flags().String("output", "stdout", "Where to write the decrypted payload file or stdout")
-	contentCmd.Flags().String("output-file", "", "Output file to write decrypted content to")
+	metadataCmd.Flags().String("file", "", "TDF file to extract encrypted payload from")
 
 }
 
-func content(cmd *cobra.Command, args []string) {
+func metadata(cmd *cobra.Command, args []string) {
 	var (
 		opentdfCredentials OpenTDFCredentials
 		oauth2Client       *http.Client
@@ -55,16 +43,6 @@ func content(cmd *cobra.Command, args []string) {
 	}
 
 	file, err := cmd.Flags().GetString("file")
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	output, err := cmd.Flags().GetString("output")
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	outputFile, err := cmd.Flags().GetString("output-file")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -113,22 +91,12 @@ func content(cmd *cobra.Command, args []string) {
 		log.Fatal(err)
 	}
 
-	var w io.Writer
-	switch output {
-	case "stdout":
-		w = os.Stdout
-	case "file":
-		w, err = os.Create(outputFile)
-		if err != nil {
-			log.Fatal(err)
-		}
-	}
-	defer w.(*os.File).Close()
 	start := time.Now()
-	err = client.GetContent(tdf, w)
+	metadata, err := client.GetEncryptedMetaData(tdf)
 	if err != nil {
 		log.Fatal(err)
 	}
 	duration := time.Since(start)
-	fmt.Printf("\nDecrypted TDF Content in %s\n", duration)
+	fmt.Printf("Decrypted TDF Encrypted Metadata in %s\n", duration)
+	fmt.Printf("Encrypted Metadata: %s\n", metadata)
 }

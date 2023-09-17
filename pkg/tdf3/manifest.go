@@ -27,3 +27,10 @@ type EncryptionMethod struct {
 	Streamable bool   `json:"isStreamable"`
 	IV         []byte `json:"iv"`
 }
+
+// Get payload
+func (k *EncryptionInformation) Key() []KeyAccess {
+	var rewraps []KeyAccess
+
+	return rewraps
+}

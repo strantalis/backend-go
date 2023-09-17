@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -51,10 +52,10 @@ type Config struct {
 }
 
 type OpenTDFConfig struct {
-	KasEndpoint           string `toml:"kasendpoint"`
-	OidcDiscoveryEndpoint string `toml:"oidcdiscoveryendpoint"`
-	ClientID              string `toml:"clientid"`
-	ClientSecret          string `toml:"clientsecret,omitempty"`
+	KasEndpoint           []string `toml:"kasendpoint"`
+	OidcDiscoveryEndpoint string   `toml:"oidcdiscoveryendpoint"`
+	ClientID              string   `toml:"clientid"`
+	ClientSecret          string   `toml:"clientsecret,omitempty"`
 }
 
 // configCmd represents the config command
@@ -81,7 +82,7 @@ var configCmd = &cobra.Command{
 		otdfConfig := OpenTDFConfig{
 			OidcDiscoveryEndpoint: m.(model).inputs[oidcDiscoveryEndpoint].Value(),
 			ClientID:              m.(model).inputs[clientID].Value(),
-			KasEndpoint:           m.(model).inputs[kasEndpoint].Value(),
+			KasEndpoint:           strings.Split(m.(model).inputs[kasEndpoint].Value(), ","),
 		}
 		if m.(model).inputs[clientSecret].Value() != "" {
 			otdfConfig.ClientSecret = m.(model).inputs[clientSecret].Value()
