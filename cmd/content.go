@@ -130,5 +130,5 @@ func content(cmd *cobra.Command, args []string) {
 		log.Fatal(err)
 	}
 	duration := time.Since(start)
-	fmt.Printf("Decrypted TDF Content in %s\n", duration)
+	fmt.Printf("\nDecrypted TDF Content in %s\n", duration)
 }

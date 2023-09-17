@@ -121,9 +121,8 @@ func (client *Client) Create(plainText io.Reader, attributes []tdf3.Attribute, e
 	keyLength := client.keyLength / 8
 
 	var (
-		tdf                          tdf3.TDF
-		payloadKey                   = make([]byte, keyLength)
-		encryptedMetatDataCipherText []byte
+		tdf        tdf3.TDF
+		payloadKey = make([]byte, keyLength)
 	)
 
 	// Generate Payload Key
@@ -135,18 +134,6 @@ func (client *Client) Create(plainText io.Reader, attributes []tdf3.Attribute, e
 	gcm, err := tdfCrypto.NewGCM(payloadKey)
 	if err != nil {
 		return nil, err
-	}
-
-	// Encrypted Meta Data
-	if len(encryptedMetaData) != 0 {
-		// Generate nonce or what some people call the iv
-		nonce, err := tdfCrypto.GenerateNonce(gcm.NonceSize())
-		if err != nil {
-			return nil, err
-		}
-
-		// Encrypt segment
-		encryptedMetatDataCipherText = gcm.Seal(nonce, nonce, encryptedMetaData, nil)
 	}
 
 	// Describe Payload
@@ -246,6 +233,7 @@ func (client *Client) Create(plainText io.Reader, attributes []tdf3.Attribute, e
 	case "split":
 		splits := crypto.KeySplit(payloadKey, len(client.kas))
 		for i, kas := range client.kas {
+			var encryptedMetatDataCipherText []byte
 
 			keyAccess := &tdf3.KeyAccess{}
 			keyAccess.Type = "wrapped"
@@ -257,6 +245,33 @@ func (client *Client) Create(plainText io.Reader, attributes []tdf3.Attribute, e
 				return nil, err
 			}
 			keyAccess.PolicyBinding = tdfCrypto.Sign([]byte(b64Policy), splits[i])
+
+			// Encrypted Meta Data
+			if len(encryptedMetaData) != 0 {
+				var metadata tdf3.Metadata
+				// Generate nonce or what some people call the iv
+				nonce, err := tdfCrypto.GenerateNonce(gcm.NonceSize())
+				if err != nil {
+					return nil, err
+				}
+
+				metaDataGCM, err := tdfCrypto.NewGCM(splits[i])
+				if err != nil {
+					return nil, err
+				}
+
+				metadata.Algorithm = "aes-256-gcm"
+				metadata.IV = nonce
+
+				// Encrypt segment
+				metadata.CipherText = metaDataGCM.Seal(nonce, nonce, encryptedMetaData, nil)
+
+				encryptedMetatDataCipherText, err = json.Marshal(metadata)
+				if err != nil {
+					return nil, err
+				}
+			}
+
 			keyAccess.EncryptedMetadata = encryptedMetatDataCipherText
 			tdf.EncryptionInformation.KeyAccess = append(tdf.EncryptionInformation.KeyAccess, *keyAccess)
 
@@ -268,6 +283,7 @@ func (client *Client) Create(plainText io.Reader, attributes []tdf3.Attribute, e
 			return nil, errors.Join(errors.New("failed to generate shmair shares from payloadkey"), err)
 		}
 		for i, kas := range client.kas {
+			var encryptedMetatDataCipherText []byte
 
 			keyAccess := &tdf3.KeyAccess{}
 			keyAccess.Type = "wrapped"
@@ -279,7 +295,25 @@ func (client *Client) Create(plainText io.Reader, attributes []tdf3.Attribute, e
 				return nil, err
 			}
 			keyAccess.PolicyBinding = tdfCrypto.Sign([]byte(b64Policy), shares[i])
+
+			// Encrypted Meta Data
+			if len(encryptedMetaData) != 0 {
+				// Generate nonce or what some people call the iv
+				nonce, err := tdfCrypto.GenerateNonce(gcm.NonceSize())
+				if err != nil {
+					return nil, err
+				}
+
+				metaDataGCM, err := tdfCrypto.NewGCM(shares[i])
+				if err != nil {
+					return nil, err
+				}
+
+				// Encrypt segment
+				encryptedMetatDataCipherText = metaDataGCM.Seal(nonce, nonce, encryptedMetaData, nil)
+			}
 			keyAccess.EncryptedMetadata = encryptedMetatDataCipherText
+
 			tdf.EncryptionInformation.KeyAccess = append(tdf.EncryptionInformation.KeyAccess, *keyAccess)
 
 		}
@@ -579,7 +613,12 @@ func (client *Client) GetEncryptedMetaData(file io.Reader) ([]byte, error) {
 
 	for _, kao := range tdf.EncryptionInformation.KeyAccess {
 		if kao.EncryptedMetadata != nil {
-			nonce, cipherText := kao.EncryptedMetadata[:gcm.NonceSize()], kao.EncryptedMetadata[gcm.NonceSize():]
+			var metadata *tdf3.Metadata
+			err = json.Unmarshal(kao.EncryptedMetadata, &metadata)
+			if err != nil {
+				return nil, err
+			}
+			nonce, cipherText := metadata.CipherText[:gcm.NonceSize()], metadata.CipherText[gcm.NonceSize():]
 			pt, err := gcm.Open(nil, nonce, cipherText, nil)
 			if err != nil {
 				return nil, errors.Join(errors.New("failed to decrypt encrypted metadata"), err)

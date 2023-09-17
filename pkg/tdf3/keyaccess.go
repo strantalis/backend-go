@@ -10,3 +10,9 @@ type KeyAccess struct {
 	Header            []byte `json:"header,omitempty"`
 	Algorithm         string `json:"algorithm,omitempty"`
 }
+
+type Metadata struct {
+	Algorithm  string `json:"algorithm"`
+	IV         []byte `json:"iv"`
+	CipherText []byte `json:"ciphertext"`
+}

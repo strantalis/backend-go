@@ -98,5 +98,5 @@ func metadata(cmd *cobra.Command, args []string) {
 	}
 	duration := time.Since(start)
 	fmt.Printf("Decrypted TDF Encrypted Metadata in %s\n", duration)
-	fmt.Println("Encrypted Metadata: ", metadata)
+	fmt.Printf("Encrypted Metadata: %s\n", metadata)
 }
