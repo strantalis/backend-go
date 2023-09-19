@@ -11,9 +11,10 @@ require (
 	github.com/spf13/cobra v1.7.0
 	github.com/virtru/access-pdp v1.5.0
 	go.uber.org/zap v1.24.0
-	golang.org/x/exp v0.0.0-20230905200255-921286631fa9
 	golang.org/x/oauth2 v0.10.0
 )
+
+require dario.cat/mergo v1.0.0
 
 require (
 	github.com/hashicorp/vault v1.14.3

@@ -2,6 +2,7 @@ package tdf3
 
 import (
 	"bytes"
+	"crypto"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -47,7 +48,7 @@ func getRootSignature(segments []Segment, key []byte) (*Signature, error) {
 		// Combine all segments to be signed
 		toSign = append(toSign, segment.Hash...)
 	}
-	rootSignature.Sig = tdfCrypto.Sign(toSign, key)
+	rootSignature.Sig = tdfCrypto.Sign(crypto.SHA256, toSign, key)
 
 	return rootSignature, nil
 }

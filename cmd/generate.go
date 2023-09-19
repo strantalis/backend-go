@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/opentdf/backend-go/pkg/tdf3"
-	"github.com/opentdf/backend-go/pkg/tdf3/client"
+	tdfClient "github.com/opentdf/backend-go/pkg/tdf3/client"
 	"github.com/pelletier/go-toml/v2"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -61,11 +61,6 @@ func generateTDF(cmd *cobra.Command, args []string) {
 	}
 
 	o, err := cmd.Flags().GetString("output")
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	keySize, err := cmd.Flags().GetInt("keysize")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -132,10 +127,8 @@ func generateTDF(cmd *cobra.Command, args []string) {
 
 	kasEndpoint := viper.GetStringSlice(fmt.Sprintf("profiles.%s.kasendpoint", opentdfCredentials.Profile))
 
-	client, err := client.NewTDFClient(client.TDFClientOptions{
-		KeyLength:      &keySize,
-		KasEndpoint:    kasEndpoint,
-		EncryptionType: keySplitType,
+	client, err := tdfClient.NewTDFClient(tdfClient.TDFClientOptions{
+		KasEndpoint: kasEndpoint,
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -152,7 +145,12 @@ func generateTDF(cmd *cobra.Command, args []string) {
 
 	var out []byte
 	start := time.Now()
-	if out, err = client.Create(reader, parsedAttributes, []byte(encryptedMetatData)); err != nil {
+	if out, err = client.Create(reader, &tdfClient.TDFCreateOptions{
+		Attributes:         parsedAttributes,
+		EncryptedMetadata:  []byte(encryptedMetatData),
+		KeySplitType:       keySplitType,
+		IsPayloadEncrypted: true,
+	}); err != nil {
 		log.Fatal(err)
 	}
 	duration := time.Since(start)

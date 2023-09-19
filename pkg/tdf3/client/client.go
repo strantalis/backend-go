@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bufio"
 	"bytes"
+	"crypto"
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
@@ -13,63 +14,49 @@ import (
 	"net/http"
 	"net/url"
 
+	"dario.cat/mergo"
 	"github.com/google/uuid"
-	"github.com/hashicorp/vault/shamir"
-	"github.com/opentdf/backend-go/internal/crypto"
 	tdfCrypto "github.com/opentdf/backend-go/internal/crypto"
 	"github.com/opentdf/backend-go/internal/kas"
 	"github.com/opentdf/backend-go/pkg/tdf3"
-	"golang.org/x/exp/slices"
 )
 
 const (
-	encryptionAlgorithm string = "aes-%d-gcm"
-	payloadProtocol     string = "zip"
-	segmentSize         int    = 1024 * 1024
-	manifestFileName    string = "0.manifest.json"
-)
-
-var (
-	validKeyLength []int = []int{64, 128, 192, 256}
+	payloadProtocolDefault string = "zip"
+	segmentSizeDefault     int    = 1024 * 1024
+	manifestFileName       string = "0.manifest.json"
 )
 
 type Client struct {
-	keyLength       int
-	kas             []*kas.Client
-	accessToken     string
-	PrivKey         []byte
-	PubKey          []byte
-	encryptionType  string
-	shamirThreshold int
+	kas     []*kas.Client
+	PrivKey []byte
+	PubKey  []byte
 }
 
 type TDFClientOptions struct {
-	KeyLength       *int
-	KasEndpoint     []string
-	AccessToken     string
-	PrivKey         []byte
-	PubKey          []byte
-	HttpClient      *http.Client
-	EncryptionType  string
-	ShamirThreshold int
+	KasEndpoint []string
+	PrivKey     []byte
+	PubKey      []byte
+	HttpClient  *http.Client
+}
+
+type TDFCreateOptions struct {
+	Attributes         []tdf3.Attribute
+	CryptoAlgorithm    tdfCrypto.CryptoAlgorithm
+	EncryptedMetadata  []byte
+	Dissem             []string
+	IsPayloadEncrypted bool
+	PayloadProtocol    string
+	SegmentSize        int
+	KeySplitType       string
+	HashAlgorithm      crypto.Hash
 }
 
 func NewTDFClient(ops ...TDFClientOptions) (*Client, error) {
 	client := &Client{}
 	if len(ops) > 0 {
-		client.accessToken = ops[0].AccessToken
 		client.PrivKey = ops[0].PrivKey
 		client.PubKey = ops[0].PubKey
-		if ops[0].KeyLength != nil && !slices.Contains(validKeyLength, *ops[0].KeyLength) {
-			return nil, errors.New("invalid key length. must be 128, 192, or 256")
-		}
-		if ops[0].KeyLength != nil {
-			client.keyLength = *ops[0].KeyLength
-		}
-
-		if ops[0].EncryptionType != "" {
-			client.encryptionType = ops[0].EncryptionType
-		}
 
 		for _, endpoint := range ops[0].KasEndpoint {
 			var (
@@ -103,47 +90,56 @@ func NewTDFClient(ops ...TDFClientOptions) (*Client, error) {
 }
 
 func clientDefaults(client *Client) {
-	if client.keyLength == 0 {
-		client.keyLength = 256
-	}
 
-	if client.encryptionType == "" {
-		client.encryptionType = "split"
-	}
-
-	if client.shamirThreshold == 0 {
-		client.shamirThreshold = 2
-	}
 }
 
-func (client *Client) Create(plainText io.Reader, attributes []tdf3.Attribute, encryptedMetaData []byte) ([]byte, error) {
-	// Divide by 8 to get bytes for key length
-	keyLength := client.keyLength / 8
-
+func (client *Client) Create(plainText io.Reader, options *TDFCreateOptions) ([]byte, error) {
 	var (
-		tdf        tdf3.TDF
-		payloadKey = make([]byte, keyLength)
+		tdf tdf3.TDF
 	)
 
-	// Generate Payload Key
-	payloadKey, err := tdfCrypto.GenerateKey(keyLength)
+	// Set IsPayloadEncrypted to true by default
+	defaultOptions := &TDFCreateOptions{
+		Attributes:      make([]tdf3.Attribute, 0),
+		CryptoAlgorithm: tdfCrypto.AES256GCM,
+		Dissem:          make([]string, 0),
+		PayloadProtocol: payloadProtocolDefault,
+		SegmentSize:     segmentSizeDefault,
+		KeySplitType:    "split",
+		HashAlgorithm:   crypto.SHA256,
+	}
+	fmt.Println(options)
+	fmt.Println(defaultOptions)
+
+	// Override default options with user options
+	err := mergo.Merge(defaultOptions, options, mergo.WithOverride)
+	if err != nil {
+		return nil, err
+	}
+	options = defaultOptions
+	fmt.Println(defaultOptions)
+
+	// Create new crypto provider
+	cryptoProvider, err := tdfCrypto.NewCryptoClient(options.CryptoAlgorithm)
 	if err != nil {
 		return nil, err
 	}
 
-	gcm, err := tdfCrypto.NewGCM(payloadKey)
-	if err != nil {
-		return nil, err
-	}
-
-	// Describe Payload
+	/*
+	 Describe Payload Object
+	*/
+	// Allow different types of payloads when supported
 	tdf.Payload.Type = "reference"
+	// Location of payload whether thats in zip or remote (only zip supported for now)
 	tdf.Payload.URL = "0.payload"
-	tdf.Payload.Protocol = payloadProtocol
-	tdf.Payload.IsEncrypted = true
-
+	tdf.Payload.Protocol = options.PayloadProtocol
+	if options.IsPayloadEncrypted {
+		tdf.Payload.IsEncrypted = true
+	} else {
+		tdf.Payload.IsEncrypted = false
+	}
 	// We should poke at Method. Still don't understand where this is used.
-	tdf.EncryptionInformation.Method.Algorithm = fmt.Sprintf(encryptionAlgorithm, client.keyLength)
+	tdf.EncryptionInformation.Method.Algorithm = options.CryptoAlgorithm.String()
 	// What does streamable mean?
 	tdf.EncryptionInformation.Method.Streamable = true
 	// I don't think IV is needed or used
@@ -152,7 +148,7 @@ func (client *Client) Create(plainText io.Reader, attributes []tdf3.Attribute, e
 	zipBuf := new(bytes.Buffer)
 	tdfZip := zip.NewWriter(zipBuf)
 
-	buf := make([]byte, segmentSize)
+	buf := make([]byte, options.SegmentSize)
 	var segments []tdf3.Segment
 	chunkCount := 0
 
@@ -183,19 +179,16 @@ func (client *Client) Create(plainText io.Reader, attributes []tdf3.Attribute, e
 			break
 		}
 
-		// Generate nonce or what some people call the iv
-		nonce, err := tdfCrypto.GenerateNonce(gcm.NonceSize())
+		// Encrypt segment
+		cipherText, err := cryptoProvider.Encrypt(buf[:n])
 		if err != nil {
 			return nil, err
 		}
 
-		// Encrypt segment
-		cipherText := gcm.Seal(nonce, nonce, buf[:n], nil)
-
 		// Build new segment
 		segment := tdf3.Segment{}
 
-		segment.Build(cipherText, payloadKey)
+		segment.Build(cipherText, cryptoProvider.Key())
 		segments = append(segments, segment)
 
 		chunkWriter.Write(cipherText)
@@ -204,22 +197,26 @@ func (client *Client) Create(plainText io.Reader, attributes []tdf3.Attribute, e
 
 	}
 
-	// Build integrity information
+	/*
+		Build integrity information
+	*/
 	tdf.EncryptionInformation.IntegrityInformation.Segments = segments
 	tdf.EncryptionInformation.IntegrityInformation.SegmentHashAlg = "GMAC"
-	tdf.EncryptionInformation.IntegrityInformation.SegmentSizeDefault = segmentSize
-	tdf.EncryptionInformation.IntegrityInformation.EncryptedSegmentSizeDefault = segmentSize + gcm.NonceSize() + 16 // 16 is for auth tag
+	tdf.EncryptionInformation.IntegrityInformation.SegmentSizeDefault = options.SegmentSize
+	//
+	tdf.EncryptionInformation.IntegrityInformation.EncryptedSegmentSizeDefault = cryptoProvider.EncryptedSegmentSizeDefault(options.SegmentSize)
 
-	err = tdf.EncryptionInformation.IntegrityInformation.BuildRootSignature(payloadKey)
+	err = tdf.EncryptionInformation.IntegrityInformation.BuildRootSignature(cryptoProvider.Key())
 	if err != nil {
 		return nil, err
 	}
 
 	//TODO: Build Policy Object
 	policy := &tdf3.Policy{}
+	// Why do we need a UUID if the policy isn't stored remotely?
 	policy.UUID = uuid.New()
-	policy.Body.DataAttributes = attributes
-	policy.Body.Dissem = make([]string, 0)
+	policy.Body.DataAttributes = options.Attributes
+	policy.Body.Dissem = options.Dissem
 
 	jsonPolicy, err := json.Marshal(policy)
 	if err != nil {
@@ -228,102 +225,58 @@ func (client *Client) Create(plainText io.Reader, attributes []tdf3.Attribute, e
 
 	tdf.EncryptionInformation.Policy = jsonPolicy
 	b64Policy := base64.StdEncoding.EncodeToString(jsonPolicy)
+	keySplits, err := tdfCrypto.KeySplit(options.KeySplitType, cryptoProvider.Key(), len(client.kas))
+	if err != nil {
+		return nil, err
+	}
 	//Key Access Object Creation
-	switch client.encryptionType {
-	case "split":
-		splits := crypto.KeySplit(payloadKey, len(client.kas))
-		for i, kas := range client.kas {
-			var encryptedMetatDataCipherText []byte
+	for i, kas := range client.kas {
+		var encryptedMetatDataCipherText []byte
 
-			keyAccess := &tdf3.KeyAccess{}
-			keyAccess.Type = "wrapped"
-			keyAccess.URL = kas.Endpoint.String()
-			keyAccess.Protocol = "kas"
+		keyAccess := &tdf3.KeyAccess{}
+		keyAccess.Type = "wrapped"
+		keyAccess.URL = kas.Endpoint.String()
+		keyAccess.Protocol = "kas"
 
-			keyAccess.WrappedKey, err = kas.LocalRewrap(splits[i])
-			if err != nil {
-				return nil, err
-			}
-			keyAccess.PolicyBinding = tdfCrypto.Sign([]byte(b64Policy), splits[i])
-
-			// Encrypted Meta Data
-			if len(encryptedMetaData) != 0 {
-				var metadata tdf3.Metadata
-				// Generate nonce or what some people call the iv
-				nonce, err := tdfCrypto.GenerateNonce(gcm.NonceSize())
-				if err != nil {
-					return nil, err
-				}
-
-				metaDataGCM, err := tdfCrypto.NewGCM(splits[i])
-				if err != nil {
-					return nil, err
-				}
-
-				metadata.Algorithm = "aes-256-gcm"
-				metadata.IV = nonce
-
-				// Encrypt segment
-				metadata.CipherText = metaDataGCM.Seal(nonce, nonce, encryptedMetaData, nil)
-
-				encryptedMetatDataCipherText, err = json.Marshal(metadata)
-				if err != nil {
-					return nil, err
-				}
-			}
-
-			keyAccess.EncryptedMetadata = encryptedMetatDataCipherText
-			tdf.EncryptionInformation.KeyAccess = append(tdf.EncryptionInformation.KeyAccess, *keyAccess)
-
-		}
-	case "shamir":
-		// Need to do some checks around number of clients and thresholds
-		shares, err := shamir.Split(payloadKey, len(client.kas), client.shamirThreshold)
+		keyAccess.WrappedKey, err = kas.LocalRewrap(keySplits[i])
 		if err != nil {
-			return nil, errors.Join(errors.New("failed to generate shmair shares from payloadkey"), err)
+			return nil, err
 		}
-		for i, kas := range client.kas {
-			var encryptedMetatDataCipherText []byte
+		keyAccess.PolicyBinding = tdfCrypto.Sign(options.HashAlgorithm, []byte(b64Policy), keySplits[i])
 
-			keyAccess := &tdf3.KeyAccess{}
-			keyAccess.Type = "wrapped"
-			keyAccess.URL = kas.Endpoint.String()
-			keyAccess.Protocol = "kas"
-
-			keyAccess.WrappedKey, err = kas.LocalRewrap(shares[i])
+		// Encrypted Meta Data
+		if len(options.EncryptedMetadata) != 0 {
+			var metadata tdf3.Metadata
+			// Generate nonce or what some people call the iv
+			metaDataCryptoProvider, err := tdfCrypto.NewCryptoClientWithKey(options.CryptoAlgorithm, keySplits[i])
 			if err != nil {
 				return nil, err
 			}
-			keyAccess.PolicyBinding = tdfCrypto.Sign([]byte(b64Policy), shares[i])
 
-			// Encrypted Meta Data
-			if len(encryptedMetaData) != 0 {
-				// Generate nonce or what some people call the iv
-				nonce, err := tdfCrypto.GenerateNonce(gcm.NonceSize())
-				if err != nil {
-					return nil, err
-				}
+			metadata.Algorithm = metaDataCryptoProvider.Algorithm()
 
-				metaDataGCM, err := tdfCrypto.NewGCM(shares[i])
-				if err != nil {
-					return nil, err
-				}
-
-				// Encrypt segment
-				encryptedMetatDataCipherText = metaDataGCM.Seal(nonce, nonce, encryptedMetaData, nil)
+			// Encrypt segment
+			metadata.CipherText, err = metaDataCryptoProvider.Encrypt(options.EncryptedMetadata)
+			if err != nil {
+				return nil, err
 			}
-			keyAccess.EncryptedMetadata = encryptedMetatDataCipherText
 
-			tdf.EncryptionInformation.KeyAccess = append(tdf.EncryptionInformation.KeyAccess, *keyAccess)
+			// We shouldn't store IV like this
+			metadata.IV = metadata.CipherText[:12]
 
+			encryptedMetatDataCipherText, err = json.Marshal(metadata)
+			if err != nil {
+				return nil, err
+			}
 		}
-	default:
-		return nil, fmt.Errorf("Not a valid encryption type")
+
+		keyAccess.EncryptedMetadata = encryptedMetatDataCipherText
+		tdf.EncryptionInformation.KeyAccess = append(tdf.EncryptionInformation.KeyAccess, *keyAccess)
 
 	}
 
 	// We only split type for now. Not sure what it actually means
-	tdf.EncryptionInformation.Type = client.encryptionType
+	tdf.EncryptionInformation.Type = options.KeySplitType
 
 	manifestHeader := &zip.FileHeader{
 		Name:   manifestFileName,
@@ -380,38 +333,11 @@ func (client *Client) GetContent(file io.Reader, writer io.Writer) error {
 		return err
 	}
 
-	var payloadKey []byte
-	switch tdf.EncryptionInformation.Type {
-	case "split":
-		var splits [][]byte
-		for k, kao := range tdf.EncryptionInformation.KeyAccess {
-			// Need to figure out how to handle other types
-			if kao.Type == "wrapped" {
-				var (
-					rewrapRequest = new(kas.RequestBody)
-				)
-				rewrapRequest.KeyAccess = kao
-				rewrapRequest.ClientPublicKey = string(client.PubKey)
-				rewrapRequest.Policy = tdf.EncryptionInformation.Policy
-				rewrapResponse, err := client.kas[k].RemoteRewrap(rewrapRequest, privateKey)
-				// Get Wrapped Key
-				if err != nil {
-					return err
-				}
-
-				// Unwrap our key from KAS
-				split, err := tdfCrypto.DecryptOAEP(privateKey.(*rsa.PrivateKey), rewrapResponse.EntityWrappedKey)
-				if err != nil {
-					return err
-				}
-				splits = append(splits, split)
-			}
-		}
-		payloadKey = crypto.KeyMerge(splits)
-	case "shamir":
-		var shares [][]byte
-		for k, kao := range tdf.EncryptionInformation.KeyAccess {
-
+	var splits = make([][]byte, len(tdf.EncryptionInformation.KeyAccess)-1)
+	// Get Split Keys
+	for k, kao := range tdf.EncryptionInformation.KeyAccess {
+		// Need to figure out how to handle other types
+		if kao.Type == "wrapped" {
 			var (
 				rewrapRequest = new(kas.RequestBody)
 			)
@@ -425,33 +351,34 @@ func (client *Client) GetContent(file io.Reader, writer io.Writer) error {
 			}
 
 			// Unwrap our key from KAS
-			share, err := tdfCrypto.DecryptOAEP(privateKey.(*rsa.PrivateKey), rewrapResponse.EntityWrappedKey)
+			split, err := tdfCrypto.DecryptOAEP(privateKey.(*rsa.PrivateKey), rewrapResponse.EntityWrappedKey)
 			if err != nil {
 				return err
 			}
-			shares = append(shares, share)
-
+			splits = append(splits, split)
 		}
-		payloadKey, err = shamir.Combine(shares)
-		if err != nil {
-			return errors.Join(errors.New("failed to combine shmair shares for payloadkey"), err)
-		}
-	default:
-		fmt.Println("Not a valid encryption type")
+	}
+	// Merge key splits back together
+	payloadKey, err := tdfCrypto.KeyMerge(tdf.EncryptionInformation.Type, splits)
+	if err != nil {
+		return err
 	}
 
 	// Before we try to decrypt we need to valid the integrity of the rootSignature
 	if err := tdf.EncryptionInformation.IntegrityInformation.Validate(payloadKey); err != nil {
 		return err
 	}
-
-	gcm, err := tdfCrypto.NewGCM(payloadKey)
+	alg, err := tdfCrypto.GetCryptoAlgorithm(tdf.EncryptionInformation.Method.Algorithm)
+	if err != nil {
+		return err
+	}
+	cryptoProvider, err := tdfCrypto.NewCryptoClientWithKey(alg, payloadKey)
 	if err != nil {
 		return err
 	}
 
 	// Open Payload File
-	payload, err := tdfZip.Open("0.payload")
+	payload, err := tdfZip.Open(tdf.Payload.URL)
 	if err != nil {
 		return err
 	}
@@ -469,12 +396,11 @@ func (client *Client) GetContent(file io.Reader, writer io.Writer) error {
 			return err
 		}
 
-		nonce, cipherText := chunk[:gcm.NonceSize()], chunk[gcm.NonceSize():]
-		pt, err := gcm.Open(nil, nonce, cipherText, nil)
+		plainText, err := cryptoProvider.Decrypt(chunk)
 		if err != nil {
 			return errors.Join(errors.New("failed to decrypt segment"), err)
 		}
-		_, err = writer.Write(pt)
+		_, err = writer.Write(plainText)
 		if err != nil {
 			return err
 		}
@@ -541,38 +467,10 @@ func (client *Client) GetEncryptedMetaData(file io.Reader) ([]byte, error) {
 		return nil, err
 	}
 
-	var payloadKey []byte
-	switch tdf.EncryptionInformation.Type {
-	case "split":
-		var splits [][]byte
-		for k, kao := range tdf.EncryptionInformation.KeyAccess {
-			// Need to figure out how to handle other types
-			if kao.Type == "wrapped" {
-				var (
-					rewrapRequest = new(kas.RequestBody)
-				)
-				rewrapRequest.KeyAccess = kao
-				rewrapRequest.ClientPublicKey = string(client.PubKey)
-				rewrapRequest.Policy = tdf.EncryptionInformation.Policy
-				rewrapResponse, err := client.kas[k].RemoteRewrap(rewrapRequest, privateKey)
-				// Get Wrapped Key
-				if err != nil {
-					return nil, err
-				}
-
-				// Unwrap our key from KAS
-				split, err := tdfCrypto.DecryptOAEP(privateKey.(*rsa.PrivateKey), rewrapResponse.EntityWrappedKey)
-				if err != nil {
-					return nil, err
-				}
-				splits = append(splits, split)
-			}
-		}
-		payloadKey = crypto.KeyMerge(splits)
-	case "shamir":
-		var shares [][]byte
-		for k, kao := range tdf.EncryptionInformation.KeyAccess {
-
+	var splits = make([][]byte, len(tdf.EncryptionInformation.KeyAccess)-1)
+	for k, kao := range tdf.EncryptionInformation.KeyAccess {
+		// Need to figure out how to handle other types
+		if kao.Type == "wrapped" {
 			var (
 				rewrapRequest = new(kas.RequestBody)
 			)
@@ -586,28 +484,21 @@ func (client *Client) GetEncryptedMetaData(file io.Reader) ([]byte, error) {
 			}
 
 			// Unwrap our key from KAS
-			share, err := tdfCrypto.DecryptOAEP(privateKey.(*rsa.PrivateKey), rewrapResponse.EntityWrappedKey)
+			split, err := tdfCrypto.DecryptOAEP(privateKey.(*rsa.PrivateKey), rewrapResponse.EntityWrappedKey)
 			if err != nil {
 				return nil, err
 			}
-			shares = append(shares, share)
-
+			splits = append(splits, split)
 		}
-		payloadKey, err = shamir.Combine(shares)
-		if err != nil {
-			return nil, errors.Join(errors.New("failed to combine shmair shares for payloadkey"), err)
-		}
-	default:
-		fmt.Println("Not a valid encryption type")
+	}
+	// Merge key splits back together
+	payloadKey, err := tdfCrypto.KeyMerge(tdf.EncryptionInformation.Type, splits)
+	if err != nil {
+		return nil, err
 	}
 
 	// Before we try to decrypt we need to valid the integrity of the rootSignature
 	if err := tdf.EncryptionInformation.IntegrityInformation.Validate(payloadKey); err != nil {
-		return nil, err
-	}
-
-	gcm, err := tdfCrypto.NewGCM(payloadKey)
-	if err != nil {
 		return nil, err
 	}
 
@@ -618,8 +509,16 @@ func (client *Client) GetEncryptedMetaData(file io.Reader) ([]byte, error) {
 			if err != nil {
 				return nil, err
 			}
-			nonce, cipherText := metadata.CipherText[:gcm.NonceSize()], metadata.CipherText[gcm.NonceSize():]
-			pt, err := gcm.Open(nil, nonce, cipherText, nil)
+			alg, err := tdfCrypto.GetCryptoAlgorithm(tdf.EncryptionInformation.Method.Algorithm)
+			if err != nil {
+				return nil, err
+			}
+			metaDataCryptoProvider, err := tdfCrypto.NewCryptoClientWithKey(alg, payloadKey)
+			if err != nil {
+				return nil, err
+			}
+
+			pt, err := metaDataCryptoProvider.Decrypt(metadata.CipherText)
 			if err != nil {
 				return nil, errors.Join(errors.New("failed to decrypt encrypted metadata"), err)
 			}

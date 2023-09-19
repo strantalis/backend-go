@@ -1,8 +1,7 @@
 package crypto
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
+	"crypto"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/rsa"
@@ -11,13 +10,77 @@ import (
 	"encoding/hex"
 	"encoding/pem"
 	"errors"
+	"strconv"
+	"strings"
 )
 
 type Error string
 
-const ()
+type CryptoAlgorithm int
 
-func GenerateKey(length int) ([]byte, error) {
+const (
+	AES128GCM CryptoAlgorithm = iota // aes-128-gcm = 0
+	AES192GCM                        // aes-192-gcm = 1
+	AES256GCM                        // aes-256-gcm = 2
+)
+
+func (alg CryptoAlgorithm) String() string {
+	return []string{"aes-128-gcm", "aes-192-gcm", "aes-256-gcm"}[alg]
+}
+
+func GetCryptoAlgorithm(name string) (CryptoAlgorithm, error) {
+	switch name {
+	case "aes-128-gcm":
+		return AES128GCM, nil
+	case "aes-192-gcm":
+		return AES192GCM, nil
+	case "aes-256-gcm":
+		return AES256GCM, nil
+	default:
+		return 0, errors.New("unsupported algorithm")
+	}
+}
+
+func (alg CryptoAlgorithm) Mode() string {
+	return strings.Split(alg.String(), "-")[2]
+}
+
+func (alg CryptoAlgorithm) BlockSize() (int, error) {
+	sSize := strings.Split(alg.String(), "-")[1]
+	return strconv.Atoi(sSize)
+
+}
+
+type CryptoClient interface {
+	Algorithm() string
+	Decrypt(cipherText []byte) ([]byte, error)
+	Encrypt(plainText []byte) ([]byte, error)
+	EncryptedSegmentSizeDefault(size int) int
+	Key() []byte
+	// Sign([]byte) ([]byte, error)
+}
+
+func NewCryptoClient(alg CryptoAlgorithm) (CryptoClient, error) {
+
+	switch alg.Mode() {
+	case "gcm":
+		return newGCM(alg)
+	default:
+		return nil, errors.New("unsupported algorithm for tdf")
+	}
+}
+
+func NewCryptoClientWithKey(alg CryptoAlgorithm, key []byte) (CryptoClient, error) {
+
+	switch alg.Mode() {
+	case "gcm":
+		return newGCMWithKey(alg, key)
+	default:
+		return nil, errors.New("unsupported algorithm for tdf")
+	}
+}
+
+func generateKey(length int) ([]byte, error) {
 	key := make([]byte, length)
 	if _, err := rand.Read(key); err != nil {
 		return nil, err
@@ -25,7 +88,7 @@ func GenerateKey(length int) ([]byte, error) {
 	return key, nil
 }
 
-func GenerateNonce(length int) ([]byte, error) {
+func generateNonce(length int) ([]byte, error) {
 	nonce := make([]byte, length)
 	_, err := rand.Read(nonce)
 	if err != nil {
@@ -34,21 +97,9 @@ func GenerateNonce(length int) ([]byte, error) {
 	return nonce, nil
 }
 
-func NewGCM(key []byte) (cipher.AEAD, error) {
-	block, err := newCipher(key)
-	if err != nil {
-		return nil, err
-	}
-	return cipher.NewGCM(block)
-}
-
-func newCipher(key []byte) (cipher.Block, error) {
-	return aes.NewCipher(key)
-}
-
-func Sign(content []byte, key []byte) []byte {
+func Sign(alg crypto.Hash, msg []byte, key []byte) []byte {
 	mac := hmac.New(sha256.New, key)
-	mac.Write(content)
+	mac.Write(msg)
 	hexHash := make([]byte, hex.EncodedLen(mac.Size()))
 	hex.Encode(hexHash, mac.Sum(nil))
 	return hexHash
