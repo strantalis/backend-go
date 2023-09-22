@@ -93,7 +93,7 @@ func clientDefaults(client *Client) {
 
 }
 
-func (client *Client) Create(plainText io.Reader, options *TDFCreateOptions) ([]byte, error) {
+func (client *Client) Create(plainText io.Reader, writer io.Writer, options *TDFCreateOptions) error {
 	var (
 		tdf tdf3.TDF
 	)
@@ -108,21 +108,18 @@ func (client *Client) Create(plainText io.Reader, options *TDFCreateOptions) ([]
 		KeySplitType:    "split",
 		HashAlgorithm:   crypto.SHA256,
 	}
-	fmt.Println(options)
-	fmt.Println(defaultOptions)
 
 	// Override default options with user options
 	err := mergo.Merge(defaultOptions, options, mergo.WithOverride)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	options = defaultOptions
-	fmt.Println(defaultOptions)
 
 	// Create new crypto provider
 	cryptoProvider, err := tdfCrypto.NewCryptoClient(options.CryptoAlgorithm)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	/*
@@ -145,8 +142,8 @@ func (client *Client) Create(plainText io.Reader, options *TDFCreateOptions) ([]
 	// I don't think IV is needed or used
 	tdf.EncryptionInformation.Method.IV = []byte("")
 
-	zipBuf := new(bytes.Buffer)
-	tdfZip := zip.NewWriter(zipBuf)
+	// zipBuf := new(bytes.Buffer)
+	tdfZip := zip.NewWriter(writer)
 
 	buf := make([]byte, options.SegmentSize)
 	var segments []tdf3.Segment
@@ -160,7 +157,7 @@ func (client *Client) Create(plainText io.Reader, options *TDFCreateOptions) ([]
 
 	chunkWriter, err := tdfZip.CreateHeader(payload)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	// Wrap io.Reader in bufio.Reader
@@ -169,7 +166,7 @@ func (client *Client) Create(plainText io.Reader, options *TDFCreateOptions) ([]
 	for {
 		n, err := bufReader.Read(buf)
 		if err != nil && err != io.EOF {
-			return nil, err
+			return err
 		}
 		// Detect mime type from first chunk
 		if chunkCount == 0 {
@@ -182,7 +179,7 @@ func (client *Client) Create(plainText io.Reader, options *TDFCreateOptions) ([]
 		// Encrypt segment
 		cipherText, err := cryptoProvider.Encrypt(buf[:n])
 		if err != nil {
-			return nil, err
+			return err
 		}
 
 		// Build new segment
@@ -208,7 +205,7 @@ func (client *Client) Create(plainText io.Reader, options *TDFCreateOptions) ([]
 
 	err = tdf.EncryptionInformation.IntegrityInformation.BuildRootSignature(cryptoProvider.Key())
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	//TODO: Build Policy Object
@@ -220,14 +217,14 @@ func (client *Client) Create(plainText io.Reader, options *TDFCreateOptions) ([]
 
 	jsonPolicy, err := json.Marshal(policy)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	tdf.EncryptionInformation.Policy = jsonPolicy
 	b64Policy := base64.StdEncoding.EncodeToString(jsonPolicy)
 	keySplits, err := tdfCrypto.KeySplit(options.KeySplitType, cryptoProvider.Key(), len(client.kas))
 	if err != nil {
-		return nil, err
+		return err
 	}
 	//Key Access Object Creation
 	for i, kas := range client.kas {
@@ -240,7 +237,7 @@ func (client *Client) Create(plainText io.Reader, options *TDFCreateOptions) ([]
 
 		keyAccess.WrappedKey, err = kas.LocalRewrap(keySplits[i])
 		if err != nil {
-			return nil, err
+			return err
 		}
 		keyAccess.PolicyBinding = tdfCrypto.Sign(options.HashAlgorithm, []byte(b64Policy), keySplits[i])
 
@@ -250,7 +247,7 @@ func (client *Client) Create(plainText io.Reader, options *TDFCreateOptions) ([]
 			// Generate nonce or what some people call the iv
 			metaDataCryptoProvider, err := tdfCrypto.NewCryptoClientWithKey(options.CryptoAlgorithm, keySplits[i])
 			if err != nil {
-				return nil, err
+				return err
 			}
 
 			metadata.Algorithm = metaDataCryptoProvider.Algorithm()
@@ -258,7 +255,7 @@ func (client *Client) Create(plainText io.Reader, options *TDFCreateOptions) ([]
 			// Encrypt segment
 			metadata.CipherText, err = metaDataCryptoProvider.Encrypt(options.EncryptedMetadata)
 			if err != nil {
-				return nil, err
+				return err
 			}
 
 			// We shouldn't store IV like this
@@ -266,7 +263,7 @@ func (client *Client) Create(plainText io.Reader, options *TDFCreateOptions) ([]
 
 			encryptedMetatDataCipherText, err = json.Marshal(metadata)
 			if err != nil {
-				return nil, err
+				return err
 			}
 		}
 
@@ -284,19 +281,19 @@ func (client *Client) Create(plainText io.Reader, options *TDFCreateOptions) ([]
 	}
 	manifestWriter, err := tdfZip.CreateHeader(manifestHeader)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	tdfb, err := json.Marshal(tdf)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	manifestWriter.Write(tdfb)
 
 	err = tdfZip.Close()
 	if err != nil {
-		return nil, err
+		return err
 	}
-	return zipBuf.Bytes(), nil
+	return nil
 }
 
 // We should probably accept an IO Writer Interface here as well

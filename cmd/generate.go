@@ -143,9 +143,14 @@ func generateTDF(cmd *cobra.Command, args []string) {
 		parsedAttributes = append(parsedAttributes, parsedAttr)
 	}
 
-	var out []byte
+	outFile, err := os.Create(output)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer outFile.Close()
+
 	start := time.Now()
-	if out, err = client.Create(reader, &tdfClient.TDFCreateOptions{
+	if err = client.Create(reader, outFile, &tdfClient.TDFCreateOptions{
 		Attributes:         parsedAttributes,
 		EncryptedMetadata:  []byte(encryptedMetatData),
 		KeySplitType:       keySplitType,
@@ -155,13 +160,5 @@ func generateTDF(cmd *cobra.Command, args []string) {
 	}
 	duration := time.Since(start)
 	fmt.Printf("TDF generated in %s\n", duration)
-	outFile, err := os.Create(output)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer outFile.Close()
-	if _, err := outFile.Write(out); err != nil {
-		log.Fatal(err)
-	}
 	fmt.Println("TDF generated")
 }
