@@ -5,7 +5,6 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/rsa"
-	"crypto/sha256"
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/pem"
@@ -98,7 +97,7 @@ func generateNonce(length int) ([]byte, error) {
 }
 
 func Sign(alg crypto.Hash, msg []byte, key []byte) []byte {
-	mac := hmac.New(sha256.New, key)
+	mac := hmac.New(alg.New, key)
 	mac.Write(msg)
 	hexHash := make([]byte, hex.EncodedLen(mac.Size()))
 	hex.Encode(hexHash, mac.Sum(nil))
