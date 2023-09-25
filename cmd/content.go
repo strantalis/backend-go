@@ -125,7 +125,11 @@ func content(cmd *cobra.Command, args []string) {
 	}
 	defer w.(*os.File).Close()
 	start := time.Now()
-	err = client.GetContent(tdf, w)
+	size, err := tdf.Stat()
+	if err != nil {
+		log.Fatal(err)
+	}
+	err = client.GetContent(tdf, size.Size(), w)
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -3,7 +3,6 @@ package client
 import (
 	"archive/zip"
 	"bufio"
-	"bytes"
 	"crypto"
 	"crypto/rsa"
 	"encoding/base64"
@@ -297,24 +296,15 @@ func (client *Client) Create(plainText io.Reader, writer io.Writer, options *TDF
 }
 
 // We should probably accept an IO Writer Interface here as well
-func (client *Client) GetContent(file io.Reader, writer io.Writer) error {
+func (client *Client) GetContent(reader io.ReaderAt, size int64, writer io.Writer) error {
 	//Can we set the size of the buffer to the segment size?
-	buff := bytes.NewBuffer([]byte{})
-
-	// Is this the best way to get the size of the file?
-	size, err := io.Copy(buff, file)
-	if err != nil {
-		return err
-	}
-
-	reader := bytes.NewReader(buff.Bytes())
 	tdfZip, err := zip.NewReader(reader, size)
 	if err != nil {
 		return err
 	}
 
 	// We need to work with the manifest from the zip archive
-	tdf, err := client.GetManifest(buff)
+	tdf, err := client.GetManifest(reader, size)
 	if err != nil {
 		return err
 	}
@@ -406,16 +396,9 @@ func (client *Client) GetContent(file io.Reader, writer io.Writer) error {
 	return nil
 }
 
-func (client *Client) GetManifest(file io.Reader) (tdf3.TDF, error) {
+func (client *Client) GetManifest(reader io.ReaderAt, size int64) (tdf3.TDF, error) {
 	var tdf tdf3.TDF
 
-	buff := bytes.NewBuffer([]byte{})
-	size, err := io.Copy(buff, file)
-	if err != nil {
-		return tdf, err
-	}
-
-	reader := bytes.NewReader(buff.Bytes())
 	tdfZip, err := zip.NewReader(reader, size)
 	if err != nil {
 		return tdf, err
@@ -451,10 +434,10 @@ func (client *Client) GetManifest(file io.Reader) (tdf3.TDF, error) {
 }
 
 // this is a hack for hackathon
-func (client *Client) GetEncryptedMetaData(file io.Reader) ([]byte, error) {
+func (client *Client) GetEncryptedMetaData(reader io.ReaderAt, size int64) ([]byte, error) {
 
 	// We need to work with the manifest from the zip archive
-	tdf, err := client.GetManifest(file)
+	tdf, err := client.GetManifest(reader, size)
 	if err != nil {
 		return nil, err
 	}

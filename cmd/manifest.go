@@ -52,12 +52,15 @@ func manifest(cmd *cobra.Command, args []string) {
 		log.Fatal(err)
 	}
 	start := time.Now()
-	manifest, err := client.GetManifest(tdf)
+	size, err := tdf.Stat()
+	if err != nil {
+		log.Fatal(err)
+	}
+	manifest, err := client.GetManifest(tdf, size.Size())
 	if err != nil {
 		log.Fatal(err)
 	}
 	duration := time.Since(start)
-	fmt.Printf("TDF Manifest in %s\n", duration)
 
 	jsonTDF, err := json.MarshalIndent(&manifest, "", "	")
 	if err != nil {
@@ -65,4 +68,5 @@ func manifest(cmd *cobra.Command, args []string) {
 	}
 
 	fmt.Println(string(jsonTDF))
+	fmt.Printf("Got TDF Manifest in %s\n", duration)
 }

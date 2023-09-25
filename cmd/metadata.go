@@ -92,7 +92,11 @@ func metadata(cmd *cobra.Command, args []string) {
 	}
 
 	start := time.Now()
-	metadata, err := client.GetEncryptedMetaData(tdf)
+	size, err := tdf.Stat()
+	if err != nil {
+		log.Fatal(err)
+	}
+	metadata, err := client.GetEncryptedMetaData(tdf, size.Size())
 	if err != nil {
 		log.Fatal(err)
 	}
