@@ -92,6 +92,9 @@ func content(cmd *cobra.Command, args []string) {
 		PublicKey:         opentdfCredentials.PublicKey,
 		Tokens:            opentdfCredentials.Tokens,
 	})
+	if err != nil {
+		log.Fatal(err)
+	}
 	oauth2Client, err = oClient.Client()
 	if err != nil {
 		log.Fatal(err)
