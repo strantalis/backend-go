@@ -92,7 +92,7 @@ func clientDefaults(client *Client) {
 
 }
 
-func (client *Client) Create(plainText io.Reader, writer io.Writer, options *TDFCreateOptions) error {
+func (client *Client) Create(content io.Reader, writer io.Writer, options *TDFCreateOptions) error {
 	var (
 		tdf tdf3.TDF
 	)
@@ -160,7 +160,7 @@ func (client *Client) Create(plainText io.Reader, writer io.Writer, options *TDF
 	}
 
 	// Wrap io.Reader in bufio.Reader
-	bufReader := bufio.NewReader(plainText)
+	bufReader := bufio.NewReaderSize(content, options.SegmentSize)
 	// Chunk the payload and encrypt into segments
 	for {
 		n, err := bufReader.Read(buf)
@@ -364,6 +364,9 @@ func (client *Client) GetContent(reader io.ReaderAt, size int64, writer io.Write
 		return err
 	}
 
+	// Wrap writer in bufio.Writer
+	bufWriter := bufio.NewWriterSize(writer, tdf.EncryptionInformation.IntegrityInformation.SegmentSizeDefault)
+
 	// Open Payload File
 	payload, err := tdfZip.Open(tdf.Payload.URL)
 	if err != nil {
@@ -387,10 +390,15 @@ func (client *Client) GetContent(reader io.ReaderAt, size int64, writer io.Write
 		if err != nil {
 			return errors.Join(errors.New("failed to decrypt segment"), err)
 		}
-		_, err = writer.Write(plainText)
+		_, err = bufWriter.Write(plainText)
 		if err != nil {
 			return err
 		}
+	}
+
+	err = bufWriter.Flush()
+	if err != nil {
+		return err
 	}
 
 	return nil
