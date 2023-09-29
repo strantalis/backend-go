@@ -4,11 +4,12 @@ Copyright © 2023 NAME HERE <EMAIL ADDRESS>
 package cmd
 
 import (
+	"encoding/base64"
 	"fmt"
+	"gopkg.in/yaml.v3"
 	"log"
 	"os"
 
-	"github.com/pelletier/go-toml/v2"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
@@ -17,11 +18,27 @@ import (
 	"golang.org/x/oauth2"
 )
 
+type Key []byte
+
+func (k Key) MarshalYAML() (interface{}, error) {
+	return base64.StdEncoding.EncodeToString(k), nil
+}
+
+func (k *Key) UnmarshalYAML(node *yaml.Node) error {
+	value := node.Value
+	ba, err := base64.StdEncoding.DecodeString(value)
+	if err != nil {
+		return err
+	}
+	*k = ba
+	return nil
+}
+
 type OpenTDFCredentials struct {
-	Profile    string        `toml:"profile"`
-	Tokens     *oauth2.Token `toml:"tokens"`
-	PrivateKey []byte        `toml:"privateKey"`
-	PublicKey  []byte        `toml:"publicKey"`
+	Profile    string        `yaml:"profile"`
+	Tokens     *oauth2.Token `yaml:"tokens"`
+	PrivateKey Key           `yaml:"privateKey"`
+	PublicKey  Key           `yaml:"publicKey"`
 }
 
 // loginCmd represents the login command
@@ -34,18 +51,16 @@ var loginCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(loginCmd)
 
-	viper.AddConfigPath("$HOME/.opentdf")
-	viper.SetConfigName("config")
-	viper.SetConfigType("toml")
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Printf("error getting user home directory: %v", homeDir)
+	}
 
 	loginCmd.Flags().String("client-id", "", "Client ID")
 	loginCmd.Flags().String("client-secret", "", "Client Secret")
+	loginCmd.Flags().String("credentials-file", fmt.Sprintf("%s/.opentdf/credentials", homeDir), "Location to store credentials for subsequent commands")
 	loginCmd.Flags().String("oidc-endpoint", "", "OIDC Endpoint")
 	loginCmd.Flags().String("profile", "default", "Profile to use")
-
-	viper.BindPFlag("clientid", loginCmd.Flags().Lookup("client-id"))
-	viper.BindPFlag("clientsecret", loginCmd.Flags().Lookup("client-secret"))
-	viper.BindPFlag("oidcendpoint", loginCmd.Flags().Lookup("oidc-endpoint"))
 
 }
 
@@ -55,15 +70,32 @@ func login(cmd *cobra.Command, args []string) {
 		opentdfCredentials OpenTDFCredentials
 	)
 
-	if err := viper.ReadInConfig(); err != nil {
-		fmt.Println("Can't read config:", err)
+	if err := loadViperConfig(); err != nil {
+		fmt.Printf(
+			`
+%s
+
+Please create a config file or run the following command:
+
+$ opentdf configure
+
+`, err.Error())
 		os.Exit(1)
 	}
-
 	profile, err := cmd.Flags().GetString("profile")
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	credentialsFile, err := cmd.Flags().GetString("credentials-file")
+	if err != nil {
+		fmt.Printf("could not get credentials-file flag value: %v", err)
+		os.Exit(1)
+	}
+
+	viper.BindPFlag(fmt.Sprintf("profiles.%s.clientid", cmd.Flags().Lookup("profile")), cmd.Flags().Lookup("client-id"))
+	viper.BindPFlag(fmt.Sprintf("profiles.%s.clientsecret", cmd.Flags().Lookup("profile")), cmd.Flags().Lookup("client-secret"))
+	viper.BindPFlag(fmt.Sprintf("profiles.%s.oidcendpoint", cmd.Flags().Lookup("profile")), cmd.Flags().Lookup("oidc-endpoint"))
 
 	opentdfCredentials.Profile = profile
 
@@ -71,10 +103,7 @@ func login(cmd *cobra.Command, args []string) {
 	clientSecret := viper.GetString(fmt.Sprintf("profiles.%s.clientsecret", profile))
 	oidcDiscoveryEndpoint := viper.GetString(fmt.Sprintf("profiles.%s.oidcdiscoveryendpoint", profile))
 
-	if err != nil {
-		log.Fatal("could not discover oidc endpoints : ", err)
-	}
-
+	// Generate new private/public key pair for future use.
 	opentdfCredentials.PrivateKey, opentdfCredentials.PublicKey, err = tdfCrypto.GenerateRSAKeysPem(2048)
 	if err != nil {
 		log.Fatalf("Error generating RSA keys: %v\n", err)
@@ -95,15 +124,14 @@ func login(cmd *cobra.Command, args []string) {
 		log.Fatal(err)
 	}
 
-	tomlCreds, err := toml.Marshal(opentdfCredentials)
+	creds, err := yaml.Marshal(opentdfCredentials)
 	if err != nil {
 		log.Fatal(err)
 	}
-	homedir, err := os.UserHomeDir()
-	if err != nil {
-		log.Println(err)
+
+	fmt.Println("Writing credentials to: ", credentialsFile)
+	if err := os.WriteFile(credentialsFile, creds, 0644); err != nil {
+		fmt.Printf("error writing credential files: %v", err)
 		os.Exit(1)
 	}
-	fmt.Println("Writing credentials to: ", fmt.Sprintf("%s/.opentdf/credentials.toml", homedir))
-	os.WriteFile(fmt.Sprintf("%s/.opentdf/credentials.toml", homedir), tomlCreds, 0644)
 }

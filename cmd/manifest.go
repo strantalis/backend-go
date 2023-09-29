@@ -22,7 +22,7 @@ var manifestCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.AddCommand(manifestCmd)
+	getCmd.AddCommand(manifestCmd)
 
 	// Here you will define your flags and configuration settings.
 

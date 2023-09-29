@@ -10,7 +10,6 @@ import (
 	"sync"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 )
 
 // Profiling Parameters
@@ -44,18 +43,15 @@ func Execute() {
 }
 
 func init() {
-	viper.AddConfigPath("$HOME/.opentdf")
-	viper.SetConfigName("config")
-	viper.SetConfigType("toml")
+
 	// Here you will define your flags and configuration settings.
 	// Cobra supports persistent flags, which, if defined here,
 	// will be global for your application.
 
 	// rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.backend-go.yaml)")
 
-	// Cobra also supports local flags, which will only run
-	// when this action is called directly.
-	rootCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
+	// Profile Config Flag
+	rootCmd.PersistentFlags().String("config", "", "config file (default is $HOME/.opentdf/config)")
 
 	// Profiling cli flags
 	rootCmd.PersistentFlags().BoolVar(&cpuProfile, "cpu-profile", false, "write cpu profile to file")

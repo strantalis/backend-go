@@ -21,6 +21,14 @@ import (
 )
 
 const (
+	profileName = iota
+	oidcDiscoveryEndpoint
+	kasEndpoint
+	clientID
+	clientSecret
+)
+
+const (
 	payloadProtocolDefault string = "zip"
 	segmentSizeDefault     int    = 1024 * 1024
 	manifestFileName       string = "0.manifest.json"
@@ -44,7 +52,7 @@ type TDFCreateOptions struct {
 	CryptoAlgorithm    tdfCrypto.CryptoAlgorithm
 	EncryptedMetadata  []byte
 	Dissem             []string
-	IsPayloadEncrypted bool
+	UnencryptedPayload bool
 	PayloadProtocol    string
 	SegmentSize        int
 	KeySplitType       string
@@ -92,12 +100,12 @@ func clientDefaults(client *Client) {
 
 }
 
-func (client *Client) Create(content io.Reader, writer io.Writer, options *TDFCreateOptions) error {
+func (client Client) Create(content io.Reader, writer io.Writer, options *TDFCreateOptions) error {
 	var (
 		tdf tdf3.TDF
 	)
 
-	// Set IsPayloadEncrypted to true by default
+	// Set TDFCreateOptions Default
 	defaultOptions := &TDFCreateOptions{
 		Attributes:      make([]tdf3.Attribute, 0),
 		CryptoAlgorithm: tdfCrypto.AES256GCM,
@@ -109,9 +117,11 @@ func (client *Client) Create(content io.Reader, writer io.Writer, options *TDFCr
 	}
 
 	// Override default options with user options
-	err := mergo.Merge(defaultOptions, options, mergo.WithOverride)
-	if err != nil {
-		return err
+	if options != nil {
+		err := mergo.Merge(defaultOptions, options, mergo.WithOverride)
+		if err != nil {
+			return err
+		}
 	}
 	options = defaultOptions
 
@@ -129,11 +139,8 @@ func (client *Client) Create(content io.Reader, writer io.Writer, options *TDFCr
 	// Location of payload whether thats in zip or remote (only zip supported for now)
 	tdf.Payload.URL = "0.payload"
 	tdf.Payload.Protocol = options.PayloadProtocol
-	if options.IsPayloadEncrypted {
-		tdf.Payload.IsEncrypted = true
-	} else {
-		tdf.Payload.IsEncrypted = false
-	}
+	tdf.Payload.IsEncrypted = options.UnencryptedPayload
+
 	// We should poke at Method. Still don't understand where this is used.
 	tdf.EncryptionInformation.Method.Algorithm = options.CryptoAlgorithm.String()
 	// What does streamable mean?
@@ -141,12 +148,10 @@ func (client *Client) Create(content io.Reader, writer io.Writer, options *TDFCr
 	// I don't think IV is needed or used
 	tdf.EncryptionInformation.Method.IV = []byte("")
 
-	// zipBuf := new(bytes.Buffer)
 	tdfZip := zip.NewWriter(writer)
 
-	buf := make([]byte, options.SegmentSize)
 	var segments []tdf3.Segment
-	chunkCount := 0
+	segmentCount := 0
 
 	// Define payload file in zip
 	payload := &zip.FileHeader{
@@ -154,10 +159,13 @@ func (client *Client) Create(content io.Reader, writer io.Writer, options *TDFCr
 		Method: zip.Store,
 	}
 
-	chunkWriter, err := tdfZip.CreateHeader(payload)
+	payloadWriter, err := tdfZip.CreateHeader(payload)
 	if err != nil {
 		return err
 	}
+
+	// Create buffer to read in data based on desired segment size
+	buf := make([]byte, options.SegmentSize)
 
 	// Wrap io.Reader in bufio.Reader
 	bufReader := bufio.NewReaderSize(content, options.SegmentSize)
@@ -168,7 +176,7 @@ func (client *Client) Create(content io.Reader, writer io.Writer, options *TDFCr
 			return err
 		}
 		// Detect mime type from first chunk
-		if chunkCount == 0 {
+		if segmentCount == 0 {
 			tdf.Payload.MimeType = http.DetectContentType(buf[:n])
 		}
 		if n == 0 {
@@ -187,9 +195,11 @@ func (client *Client) Create(content io.Reader, writer io.Writer, options *TDFCr
 		segment.Build(cipherText, cryptoProvider.Key())
 		segments = append(segments, segment)
 
-		chunkWriter.Write(cipherText)
+		if _, err := payloadWriter.Write(cipherText); err != nil {
+			return err
+		}
 
-		chunkCount++
+		segmentCount++
 
 	}
 
@@ -197,17 +207,19 @@ func (client *Client) Create(content io.Reader, writer io.Writer, options *TDFCr
 		Build integrity information
 	*/
 	tdf.EncryptionInformation.IntegrityInformation.Segments = segments
+	// GMAC means to use the gcm auth tag
 	tdf.EncryptionInformation.IntegrityInformation.SegmentHashAlg = "GMAC"
 	tdf.EncryptionInformation.IntegrityInformation.SegmentSizeDefault = options.SegmentSize
 	//
 	tdf.EncryptionInformation.IntegrityInformation.EncryptedSegmentSizeDefault = cryptoProvider.EncryptedSegmentSizeDefault(options.SegmentSize)
 
+	// Build root signature from all the segments
 	err = tdf.EncryptionInformation.IntegrityInformation.BuildRootSignature(cryptoProvider.Key())
 	if err != nil {
 		return err
 	}
 
-	//TODO: Build Policy Object
+	//Build Policy Object
 	policy := &tdf3.Policy{}
 	// Why do we need a UUID if the policy isn't stored remotely?
 	policy.UUID = uuid.New()
@@ -226,15 +238,15 @@ func (client *Client) Create(content io.Reader, writer io.Writer, options *TDFCr
 		return err
 	}
 	//Key Access Object Creation
-	for i, kas := range client.kas {
+	for i, k := range client.kas {
 		var encryptedMetatDataCipherText []byte
 
 		keyAccess := &tdf3.KeyAccess{}
 		keyAccess.Type = "wrapped"
-		keyAccess.URL = kas.Endpoint.String()
+		keyAccess.URL = k.Endpoint.String()
 		keyAccess.Protocol = "kas"
 
-		keyAccess.WrappedKey, err = kas.LocalRewrap(keySplits[i])
+		keyAccess.WrappedKey, err = k.LocalRewrap(keySplits[i])
 		if err != nil {
 			return err
 		}
@@ -282,11 +294,13 @@ func (client *Client) Create(content io.Reader, writer io.Writer, options *TDFCr
 	if err != nil {
 		return err
 	}
-	tdfb, err := json.Marshal(tdf)
+	manifest, err := json.Marshal(tdf)
 	if err != nil {
 		return err
 	}
-	manifestWriter.Write(tdfb)
+	if _, err := manifestWriter.Write(manifest); err != nil {
+		return err
+	}
 
 	err = tdfZip.Close()
 	if err != nil {
@@ -295,8 +309,8 @@ func (client *Client) Create(content io.Reader, writer io.Writer, options *TDFCr
 	return nil
 }
 
-// We should probably accept an IO Writer Interface here as well
-func (client *Client) GetContent(reader io.ReaderAt, size int64, writer io.Writer) error {
+// GetPayload gets the encrypted payload within the tdf
+func (client Client) GetPayload(reader io.ReaderAt, size int64, writer io.Writer) error {
 	//Can we set the size of the buffer to the segment size?
 	tdfZip, err := zip.NewReader(reader, size)
 	if err != nil {
@@ -304,7 +318,7 @@ func (client *Client) GetContent(reader io.ReaderAt, size int64, writer io.Write
 	}
 
 	// We need to work with the manifest from the zip archive
-	tdf, err := client.GetManifest(reader, size)
+	tdf, err := getManifest(tdfZip)
 	if err != nil {
 		return err
 	}
@@ -404,17 +418,13 @@ func (client *Client) GetContent(reader io.ReaderAt, size int64, writer io.Write
 	return nil
 }
 
-func (client *Client) GetManifest(reader io.ReaderAt, size int64) (tdf3.TDF, error) {
-	var tdf tdf3.TDF
+func getManifest(reader *zip.Reader) (*tdf3.TDF, error) {
 
-	tdfZip, err := zip.NewReader(reader, size)
-	if err != nil {
-		return tdf, err
-	}
+	var tdf = new(tdf3.TDF)
 
 	// Find the file in the zip archive based on its name.
 	var targetFile *zip.File
-	for _, file := range tdfZip.File {
+	for _, file := range reader.File {
 		if file.Name == manifestFileName {
 			targetFile = file
 			break
@@ -441,8 +451,18 @@ func (client *Client) GetManifest(reader io.ReaderAt, size int64) (tdf3.TDF, err
 	return tdf, nil
 }
 
+func (client Client) GetManifest(reader io.ReaderAt, size int64) (*tdf3.TDF, error) {
+
+	tdfZip, err := zip.NewReader(reader, size)
+	if err != nil {
+		return nil, err
+	}
+	return getManifest(tdfZip)
+
+}
+
 // this is a hack for hackathon
-func (client *Client) GetEncryptedMetaData(reader io.ReaderAt, size int64) ([]byte, error) {
+func (client Client) GetEncryptedMetaData(reader io.ReaderAt, size int64) ([]byte, error) {
 
 	// We need to work with the manifest from the zip archive
 	tdf, err := client.GetManifest(reader, size)

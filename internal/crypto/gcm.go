@@ -27,7 +27,7 @@ func newGCM(alg CryptoAlgorithm) (*GCM, error) {
 		return nil, err
 	}
 
-	cipher, err := cipher.NewGCM(block)
+	c, err := cipher.NewGCM(block)
 	if err != nil {
 		return nil, err
 	}
@@ -35,7 +35,7 @@ func newGCM(alg CryptoAlgorithm) (*GCM, error) {
 	return &GCM{
 		alg:    alg,
 		key:    key,
-		cipher: cipher,
+		cipher: c,
 	}, nil
 }
 
@@ -45,7 +45,7 @@ func newGCMWithKey(alg CryptoAlgorithm, key []byte) (*GCM, error) {
 		return nil, err
 	}
 
-	cipher, err := cipher.NewGCM(block)
+	c, err := cipher.NewGCM(block)
 	if err != nil {
 		return nil, err
 	}
@@ -53,24 +53,24 @@ func newGCMWithKey(alg CryptoAlgorithm, key []byte) (*GCM, error) {
 	return &GCM{
 		alg:    alg,
 		key:    key,
-		cipher: cipher,
+		cipher: c,
 	}, nil
 }
 
-func (g *GCM) Algorithm() string {
+func (g GCM) Algorithm() string {
 	return g.alg.String()
 }
 
-func (g *GCM) Key() []byte {
+func (g GCM) Key() []byte {
 	return g.key
 }
 
-func (g *GCM) EncryptedSegmentSizeDefault(size int) int {
+func (g GCM) EncryptedSegmentSizeDefault(size int) int {
 	// A total encrypted segment for gcm would be segment size + nonce size + auth tag size
 	return size + g.cipher.NonceSize() + 16
 }
 
-func (g *GCM) Encrypt(msg []byte) ([]byte, error) {
+func (g GCM) Encrypt(msg []byte) ([]byte, error) {
 	nonce, err := generateNonce(g.cipher.NonceSize())
 	if err != nil {
 		return nil, err
@@ -79,7 +79,7 @@ func (g *GCM) Encrypt(msg []byte) ([]byte, error) {
 	return cipherText, nil
 }
 
-func (g *GCM) Decrypt(msg []byte) ([]byte, error) {
+func (g GCM) Decrypt(msg []byte) ([]byte, error) {
 	nonce, cipherText := msg[:g.cipher.NonceSize()], msg[g.cipher.NonceSize():]
 	plainText, err := g.cipher.Open(nil, nonce, cipherText, nil)
 	if err != nil {

@@ -5,6 +5,7 @@ package cmd
 
 import (
 	"fmt"
+	"gopkg.in/yaml.v3"
 	"io"
 	"log"
 	"net/http"
@@ -13,46 +14,51 @@ import (
 
 	"github.com/opentdf/backend-go/pkg/oidc"
 	tdf3 "github.com/opentdf/backend-go/pkg/tdf3/client"
-	"github.com/pelletier/go-toml/v2"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
 
 // contentCmd represents the content command
-var contentCmd = &cobra.Command{
-	Use:   "content",
-	Short: "Get the content of a TDF",
-	Run:   content,
+var payloadCmd = &cobra.Command{
+	Use:   "payload",
+	Short: "Get the payload of a TDF",
+	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+		if err := loadViperConfig(); err != nil {
+			fmt.Printf(
+				`
+%s
+
+Please create a config file or run the following command:
+
+$ opentdf configure
+
+`, err.Error())
+			os.Exit(1)
+		}
+	},
+	Run: payload,
 }
 
 func init() {
-	rootCmd.AddCommand(contentCmd)
+	getCmd.AddCommand(payloadCmd)
 
-	// homedir, err := os.UserHomeDir()
-	// if err != nil {
-	// 	log.Println(err)
-	// 	os.Exit(1)
-	// }
-	// viper.AddConfigPath(fmt.Sprintf("%s/.opentdf", homedir))
-	// viper.SetConfigName("config")
-	// viper.SetConfigType("toml")
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Printf("error getting user home directory: %v", homeDir)
+	}
 
-	contentCmd.Flags().String("file", "", "TDF file to extract encrypted payload from")
-	contentCmd.Flags().String("output", "stdout", "Where to write the decrypted payload file or stdout")
-	contentCmd.Flags().String("output-file", "", "Output file to write decrypted content to")
+	payloadCmd.Flags().String("credentials-file", fmt.Sprintf("%s/.opentdf/credentials", homeDir), "Location to read credentials from")
+	payloadCmd.Flags().String("file", "", "TDF file to extract encrypted payload from")
+	payloadCmd.Flags().String("output", "stdout", "Where to write the decrypted payload file or stdout")
+	payloadCmd.Flags().String("output-file", "", "Output file to write decrypted payload to")
 
 }
 
-func content(cmd *cobra.Command, args []string) {
+func payload(cmd *cobra.Command, args []string) {
 	var (
 		opentdfCredentials OpenTDFCredentials
 		oauth2Client       *http.Client
 	)
-
-	if err := viper.ReadInConfig(); err != nil {
-		fmt.Println("Can't read config:", err)
-		os.Exit(1)
-	}
 
 	file, err := cmd.Flags().GetString("file")
 	if err != nil {
@@ -69,16 +75,17 @@ func content(cmd *cobra.Command, args []string) {
 		log.Fatal(err)
 	}
 
-	homedir, err := os.UserHomeDir()
+	credentialsFileLocation, err := cmd.Flags().GetString("credentials-file")
 	if err != nil {
-		log.Println(err)
+		fmt.Printf("could not get credentials-file flag value: %v", err)
 		os.Exit(1)
 	}
-	byteCredentials, err := os.ReadFile(fmt.Sprintf("%s/.opentdf/credentials.toml", homedir))
+
+	credentialFile, err := os.ReadFile(credentialsFileLocation)
 	if err != nil {
 		log.Fatal(err)
 	}
-	if err = toml.Unmarshal(byteCredentials, &opentdfCredentials); err != nil {
+	if err = yaml.Unmarshal(credentialFile, &opentdfCredentials); err != nil {
 		log.Fatal(err)
 	}
 
@@ -132,10 +139,10 @@ func content(cmd *cobra.Command, args []string) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	err = client.GetContent(tdf, size.Size(), w)
+	err = client.GetPayload(tdf, size.Size(), w)
 	if err != nil {
 		log.Fatal(err)
 	}
 	duration := time.Since(start)
-	fmt.Printf("\nDecrypted TDF Content in %s\n", duration)
+	fmt.Printf("\nDecrypted TDF payload in %s\n", duration)
 }

@@ -14,38 +14,36 @@ import (
 
 	"github.com/opentdf/backend-go/pkg/tdf3"
 	tdfClient "github.com/opentdf/backend-go/pkg/tdf3/client"
-	"github.com/pelletier/go-toml/v2"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
 
-// generateCmd represents the generate command
-var generateCmd = &cobra.Command{
-	Use:   "generate",
+// Cmd represents the generate command
+var tdfCmd = &cobra.Command{
+	Use:   "tdf",
 	Short: "Create a TDF",
-	Run:   generateTDF,
+	Run:   tdfTDF,
 }
 
 func init() {
-	rootCmd.AddCommand(generateCmd)
+	createCmd.AddCommand(tdfCmd)
 
-	generateCmd.Flags().String("file", "", "File to wrap with TDF")
-	generateCmd.Flags().String("text", "", "Text to wrap with TDF")
-	generateCmd.Flags().String("output", "file://test.tdf", "Output file")
-	generateCmd.Flags().Int("keysize", 256, "Key size")
-	generateCmd.Flags().StringArray("attribute", []string{}, "Attribute to apply to the TDF")
-	generateCmd.Flags().String("keySplitType", "split", "Key split type can be split or shamir")
-	generateCmd.Flags().String("encryptedMetatData", "", "Encrypted metadata")
+	tdfCmd.Flags().String("file", "", "File to wrap with TDF")
+	tdfCmd.Flags().String("text", "", "Text to wrap with TDF")
+	tdfCmd.Flags().String("output", "file://test.tdf", "Output file")
+	tdfCmd.Flags().Int("keysize", 256, "Key size")
+	tdfCmd.Flags().StringArray("attribute", []string{}, "Attribute to apply to the TDF")
+	tdfCmd.Flags().String("keySplitType", "split", "Key split type can be split or shamir")
+	tdfCmd.Flags().String("encryptedMetatData", "", "Encrypted metadata")
 }
 
-func generateTDF(cmd *cobra.Command, args []string) {
+func tdfTDF(cmd *cobra.Command, args []string) {
 	var (
-		opentdfCredentials OpenTDFCredentials
-		reader             io.Reader
-		output             string
+		reader io.Reader
+		output string
 	)
 
-	if err := viper.ReadInConfig(); err != nil {
+	if err := loadViperConfig(); err != nil {
 		fmt.Println("Can't read config:", err)
 		os.Exit(1)
 	}
@@ -76,6 +74,11 @@ func generateTDF(cmd *cobra.Command, args []string) {
 	}
 
 	encryptedMetatData, err := cmd.Flags().GetString("encryptedMetatData")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	profile, err := cmd.Flags().GetString("profile")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -112,20 +115,7 @@ func generateTDF(cmd *cobra.Command, args []string) {
 		reader = bytes.NewBufferString(text)
 	}
 
-	homedir, err := os.UserHomeDir()
-	if err != nil {
-		log.Println(err)
-		os.Exit(1)
-	}
-	byteCredentials, err := os.ReadFile(fmt.Sprintf("%s/.opentdf/credentials.toml", homedir))
-	if err != nil {
-		log.Fatal(err)
-	}
-	if err = toml.Unmarshal(byteCredentials, &opentdfCredentials); err != nil {
-		log.Fatal(err)
-	}
-
-	kasEndpoint := viper.GetStringSlice(fmt.Sprintf("profiles.%s.kasendpoint", opentdfCredentials.Profile))
+	kasEndpoint := viper.GetStringSlice(fmt.Sprintf("profiles.%s.kasendpoint", profile))
 
 	client, err := tdfClient.NewTDFClient(tdfClient.TDFClientOptions{
 		KasEndpoint: kasEndpoint,
@@ -151,14 +141,13 @@ func generateTDF(cmd *cobra.Command, args []string) {
 
 	start := time.Now()
 	if err = client.Create(reader, outFile, &tdfClient.TDFCreateOptions{
-		Attributes:         parsedAttributes,
-		EncryptedMetadata:  []byte(encryptedMetatData),
-		KeySplitType:       keySplitType,
-		IsPayloadEncrypted: true,
+		Attributes:        parsedAttributes,
+		EncryptedMetadata: []byte(encryptedMetatData),
+		KeySplitType:      keySplitType,
 	}); err != nil {
 		log.Fatal(err)
 	}
 	duration := time.Since(start)
-	fmt.Printf("TDF generated in %s\n", duration)
-	fmt.Println("TDF generated")
+	fmt.Printf("TDF created in %s\n", duration)
+	fmt.Println("TDF created successfully")
 }
