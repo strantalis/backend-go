@@ -27,10 +27,10 @@ func LoadAttributeRoutes(db *db.Client) chi.Router {
 		r.Delete("/authorities", a.deleteAuthority)
 
 		//Definitions
-		r.Get("/definitions", a.getDefinitions)
-		r.Post("/definitions", a.createDefinition)
-		r.Put("/definitions", a.updateDefinition)
-		r.Delete("/definitions", a.deleteDefinition)
+		r.Get("/definitions/attributes", a.getDefinitions)
+		r.Post("/definitions/attributes", a.createDefinition)
+		r.Put("/definitions/attributes", a.updateDefinition)
+		r.Delete("/definitions/attributes", a.deleteDefinition)
 	})
 	return r
 }
@@ -139,9 +139,39 @@ func (a attrClient) createDefinition(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a attrClient) updateDefinition(w http.ResponseWriter, r *http.Request) {
-	// TODO
+	var attr attributes.Attribute
+	err := json.NewDecoder(r.Body).Decode(&attr)
+	if err != nil {
+		slog.Error("could not decode attribute", err)
+		http.Error(w, "could not decode attribute", http.StatusBadRequest)
+		return
+	}
+	_, err = a.Client.UpdateDefinition(attr)
+	if err != nil {
+		slog.Error("could not update attribute", err)
+		http.Error(w, "could not update attribute", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(attr)
 }
 
 func (a attrClient) deleteDefinition(w http.ResponseWriter, r *http.Request) {
-	// TODO
+	var attr attributes.Attribute
+	err := json.NewDecoder(r.Body).Decode(&attr)
+	if err != nil {
+		slog.Error("could not decode attribute", err)
+		http.Error(w, "could not decode attribute", http.StatusBadRequest)
+		return
+	}
+	err = a.Client.DeleteDefinition(attr.Authority, attr.Name)
+	if err != nil {
+		slog.Error("could not delete attribute", err)
+		http.Error(w, "could not delete attribute", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+	w.Header().Set("Content-Type", "application/json")
+
 }

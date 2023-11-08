@@ -14,6 +14,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/opentdf/backend-go/api"
+	"github.com/opentdf/backend-go/api/middleware/auth"
 	"github.com/opentdf/backend-go/internal/db"
 	"github.com/spf13/cobra"
 )
@@ -48,27 +49,21 @@ func start(cmd *cobra.Command, args []string) {
 	}
 
 	r := chi.NewRouter()
-	r.Route("/api", func(r chi.Router) {
-		r.Mount("/attributes", api.LoadAttributeRoutes(dbClient))
-		r.Mount("/entitlements", api.LoadEntitlementRoutes())
+	r.Group(func(r chi.Router) {
+		r.Use(auth.OidcAuth("https://platform.shp.virtru.us/auth/realms/virtru/protocol/openid-connect/certs"))
+		r.Route("/api", func(r chi.Router) {
+			r.Mount("/attributes", api.LoadAttributeRoutes(dbClient))
+			r.Mount("/entitlements", api.LoadEntitlementRoutes(dbClient))
+		})
+	})
+	r.Route("/healthz", func(r chi.Router) {
+		r.Get("/", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})
 	})
 
-	for _, route := range r.Routes() {
-		slog.Info("Loaded Root route: ", route.Pattern)
-
-		if route.SubRoutes != nil {
-			for _, subRoute := range route.SubRoutes.Routes() {
-				slog.Info("Loaded Subroute route: ", subRoute.Pattern)
-				for _, s := range subRoute.SubRoutes.Routes() {
-					slog.Info("Loaded Subroute route: ", s.Pattern)
-				}
-
-			}
-		}
-	}
-
 	server := &http.Server{
-		Addr:    ":8080",
+		Addr:    ":8081",
 		Handler: r,
 	}
 
