@@ -11,8 +11,8 @@ import (
 )
 
 type Client struct {
-	db  *db.Client
-	opa *sdk.OPA
+	db *db.Client
+	// opa *sdk.OPA
 }
 
 func NewClient(db *db.Client) Client {

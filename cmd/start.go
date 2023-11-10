@@ -56,6 +56,7 @@ func start(cmd *cobra.Command, args []string) {
 			r.Mount("/entitlements", api.LoadEntitlementRoutes(dbClient))
 		})
 	})
+	r.Mount("/v1/attrName", api.LoadAttributeRoutesHack(dbClient))
 	r.Route("/healthz", func(r chi.Router) {
 		r.Get("/", func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)

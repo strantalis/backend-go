@@ -35,6 +35,15 @@ func LoadAttributeRoutes(db *db.Client) chi.Router {
 	return r
 }
 
+// TODO: This is a hack to allow KAS to resolve attributes
+func LoadAttributeRoutesHack(db *db.Client) chi.Router {
+	attr := attributes.NewClient(db)
+	a := attrClient{attr}
+	r := chi.NewRouter()
+	r.Get("/", a.getDefinitions)
+	return r
+}
+
 func (a attrClient) getAttributes(w http.ResponseWriter, r *http.Request) {
 	// TODO
 }
